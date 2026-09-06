@@ -93,6 +93,8 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     treasuryAssetsUnits: chain ? units(chain.treasuryAssets) : null,
     maxBatch: chain?.maxBatch ?? null,
     redeemLockSeconds: chain?.redeemLock ?? null,
+    /** Wei a mint must send on to the Chainlink subscription, one fee per transaction. */
+    vrfFeeWei: chain ? chain.vrfFeeWei.toString() : null,
     backings: chain?.backings ?? [...BACKINGS],
     feePercentOfYield: FEE_PCT,
     yieldSteps: YIELD_STEPS,

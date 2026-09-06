@@ -6,7 +6,7 @@
  * are theirs, and a hostile ENS name cannot break out of an attribute.
  */
 import { test, expect } from "bun:test";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable } from "./site.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable, eth, ethOf } from "./site.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
 import { stateJson, holderJson, specJson, coinJson } from "./api.ts";
 import { holderFacts } from "./facts.ts";
@@ -74,6 +74,7 @@ export function fakeChain(extra: Partial<ChainState> = {}): ChainState {
     treasuryAssets: 400_000n,
     maxBatch: 10,
     redeemLock: 30 * 86400,
+    vrfFeeWei: 300_000_000_000_000n,
     backings: [10, 25, 50],
     coins,
     readAt: Date.now(),
@@ -131,6 +132,25 @@ test("the mint script approves the exact total, keeps the transaction per chain,
   const h = homePage(fakeChain(), OK);
   for (const s of ["onenft_mint:", "eth_requestAccounts", "wallet_switchEthereumChain", "CFG.sel.approve", "CFG.sel.mint", "/api/coin/", "j.sealed===false", "eth_getTransactionReceipt", "balanceOf", "allowance", "accountsChanged", "founder-box", "mintFounder"]) expect(h).toContain(s);
   expect(h).toContain('id="founder-box" hidden');
+});
+
+test("the Chainlink fee is shown and rides along as value on both mints", () => {
+  const c = fakeChain();
+  const h = homePage(c, OK);
+  expect(h).toContain("Plus 0.0003 ETH for the randomness");
+  expect(h).toContain("one fee per transaction whatever the count");
+  expect(h).toContain('"vrfFeeWei":"300000000000000"');
+  expect(h).toContain('"vrfFeeEth":"0.0003"');
+  // Both sends go through withFee, so neither can forget the value.
+  expect((h.match(/params:\[withFee\(/g) ?? []).length).toBe(2);
+  expect(h).toContain("tx.value='0x'+v.toString(16)");
+  expect(eth(c.vrfFeeWei)).toBe("0.0003 ETH");
+  expect(ethOf(0n)).toBe("0");
+  expect(howPage(c, OK)).toContain("sends 0.0003 ETH with it");
+  // A contract that charges nothing shows no fee line and sends no value.
+  const free = homePage(fakeChain({ vrfFeeWei: 0n }), OK);
+  expect(free).not.toContain("for the randomness, paid to Chainlink");
+  expect(stateJson(c, undefined, OK).vrfFeeWei).toBe("300000000000000");
 });
 
 test("home with a contract and nothing minted still offers the mint box", () => {

@@ -57,14 +57,15 @@ export const ABI = parseAbi([
   "function mastersLeft(uint256 series) view returns (uint256)",
   "function backingOf(uint8 backingClass) view returns (uint256)",
   "function MAX_BATCH() view returns (uint8)",
+  "function vrfFeeWei() view returns (uint256)",
   "function REDEEM_LOCK() view returns (uint256)",
   "function RETRY_BLOCKS() view returns (uint256)",
   "function ownerOf(uint256 id) view returns (address)",
   "function yieldBps(uint256 id) view returns (uint32)",
   "function requests(uint256 requestId) view returns (uint64 firstId, uint16 count, uint64 blockNumber, bool replaced)",
   "function coinOf(uint256 id) view returns ((uint64 seed, uint16 slot, uint8 backingClass, bool founder, bool sealed_, address renderer, uint256 series, uint256 number, uint256 shares, uint256 principal, uint256 claimed, uint256 requestId, uint256 mintedAt, uint256 redeemableAt, uint256 nav, uint256 profit, uint256 lifetime, uint32 yieldBps) info)",
-  "function mint(uint8 backingClass, uint8 count, address to) returns (uint256)",
-  "function mintFounder(uint8 count, address to) returns (uint256)",
+  "function mint(uint8 backingClass, uint8 count, address to) payable returns (uint256)",
+  "function mintFounder(uint8 count, address to) payable returns (uint256)",
   "function claim(uint256 id) returns (uint256)",
   "function redeem(uint256 id) returns (uint256)",
   "function retry(uint256 requestId) returns (uint256)",
@@ -168,6 +169,8 @@ export type ChainState = {
   maxBatch: number;
   /** Seconds a coin must wait after its mint before it can be burned. */
   redeemLock: number;
+  /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per transaction, whatever the count. */
+  vrfFeeWei: bigint;
   /** The three backing classes in whole USDC, read from the contract. */
   backings: number[];
   /** Every coin that exists, by id. A redeemed coin leaves the map. */
@@ -281,11 +284,11 @@ function idsToRead(last: number, all: boolean): number[] {
 async function readChainState(): Promise<ChainState> {
   if (!client || !CONTRACT) throw new Error("no contract configured");
   const c = { address: CONTRACT, abi: ABI } as const;
-  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, b0, b1, b2] = await client.multicall({
+  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, b0, b1, b2] = await client.multicall({
     contracts: [
       { ...c, functionName: "author" }, { ...c, functionName: "renderer" }, { ...c, functionName: "rendererLocked" },
       { ...c, functionName: "minted" }, { ...c, functionName: "nextId" }, { ...c, functionName: "USDC" }, { ...c, functionName: "VAULT" },
-      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" },
+      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" },
       { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] },
     ],
     allowFailure: false,
@@ -338,6 +341,7 @@ async function readChainState(): Promise<ChainState> {
     treasuryAssets: treasury,
     maxBatch: Number(maxBatch),
     redeemLock: Number(redeemLock),
+    vrfFeeWei,
     backings,
     coins,
     readAt: Date.now(),

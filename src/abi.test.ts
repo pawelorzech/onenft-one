@@ -13,6 +13,7 @@ const ARTIFACT = new URL("../contracts/out/OneCoin.sol/OneCoin.json", import.met
 
 const sig = (a: AbiFunction | AbiEvent) => `${a.name}(${a.inputs.map((i) => i.type).join(",")})`;
 const rets = (a: AbiFunction) => a.outputs.map((o) => o.type).join(",");
+const mut = (a: AbiFunction) => (a.stateMutability === "pure" ? "view" : a.stateMutability);
 const tuple = (a: AbiFunction) => (((a.outputs[0] ?? {}) as { components?: { name?: string; type: string }[] }).components ?? []).map((c) => `${c.name}:${c.type}`).join(",");
 
 test("the site's ABI matches the compiled OneCoin", async () => {
@@ -26,6 +27,9 @@ test("the site's ABI matches the compiled OneCoin", async () => {
     const found = byName.get(`${item.type}:${sig(item as AbiFunction)}`);
     expect(`${item.type} ${sig(item as AbiFunction)}`).toBe(found ? `${item.type} ${sig(item as AbiFunction)}` : "missing from the contract");
     if (item.type === "function") {
+      // A call that turned payable, or the other way round, changes what the browser must send.
+      // `pure` and `view` are the same to a caller, so they count as one.
+      expect(`${sig(item as AbiFunction)} ${mut(item as AbiFunction)}`).toBe(`${sig(item as AbiFunction)} ${mut(found as AbiFunction)}`);
       expect(rets(item as AbiFunction)).toBe(rets(found as AbiFunction));
       if (rets(item as AbiFunction) === "tuple") expect(tuple(item as AbiFunction)).toBe(tuple(found as AbiFunction));
     } else {
