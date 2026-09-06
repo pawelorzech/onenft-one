@@ -154,7 +154,8 @@ async function route(url: URL): Promise<Response> {
     if (c && afterBlock(url.searchParams) > (c.readBlock ?? 0n)) status = { ...status, stale: true, error: "The transaction is confirmed, but this RPC has not caught up yet. Refresh to check the updated coin." };
     if (!c) {
       // Unknown here. That is "no such coin" only when the chain answered and the id is past the last mint.
-      const unread = !chain || status.stale;
+      const absentBlock = chain?.absentCoins?.get(id)?.readBlock ?? (chain && id >= chain.nextId ? chain.blockNumber ?? 0n : 0n);
+      const unread = !chain || status.stale || afterBlock(url.searchParams) > absentBlock;
       if (unread) return m[1] ? json({ error: "the chain did not answer for this coin", chain: status }, 0, 503) : html(chainDown(chain, `Coin ${pad5(id)} could not be read from the chain. Try again in a minute.`), 503);
       return m[1] ? json({ error: "no such coin", minted: chain!.minted }, 0, 404) : html(notFound(chain, `Coin ${pad5(id)} does not exist. ${chain!.nextId - 1} coins are minted.`), 404);
     }

@@ -9,6 +9,7 @@
 # under .renderer, which is where contracts/deploy.sh reads it from. Deploying a renderer is
 # safe on its own: nothing points at it until deploy.sh or setRenderer says so.
 set -euo pipefail
+source "$(dirname "$0")/../scripts/operator-safe.sh"
 NET="${1:?sepolia|mainnet}"
 case "$NET" in
   sepolia) RPC=https://sepolia.base.org;;
@@ -17,25 +18,14 @@ case "$NET" in
 esac
 cd "$(dirname "$0")"
 
-PK=$(security find-generic-password -a onenft-deployer -s onenft-deployer -w)
-DEPLOYER=$(cast wallet address --private-key "$PK")
+operator_signer deployer
+DEPLOYER=$(operator_address "$(cast wallet address "${SIGNER_ARGS[@]}")")
 echo "network $NET  deployer $DEPLOYER  balance $(cast balance "$DEPLOYER" --rpc-url "$RPC" --ether) ETH"
 
-LOG="/tmp/onenft-one-renderer-$NET.log"
+LOG="$OPERATOR_TMP_DIR/onenft-one-renderer-$NET.log"
 : > "$LOG"
 
-create() { # create <path:Name> [constructor args...]
-  local what="$1"; shift
-  local addr=""
-  for try in 1 2 3; do
-    addr=$( (forge create "$what" --rpc-url "$RPC" --private-key "$PK" --broadcast "$@" 2>&1 || true) \
-      | tee -a "$LOG" | grep -E "Deployed to" | awk '{print $3}' || true)
-    [ -n "$addr" ] && break
-    echo "$what failed (try $try), waiting" >&2; sleep 8
-  done
-  [ -n "$addr" ] || { echo "$what deploy failed, see $LOG" >&2; exit 1; }
-  echo "$addr"
-}
+create() { operator_create "$@"; }
 
 MASTER=$(create src/MasterRenderer.sol:MasterRenderer)
 echo "MasterRenderer $MASTER"
@@ -47,7 +37,6 @@ for a in "$MASTER" "$META"; do
 done
 REN=$(create src/CoinRenderer.sol:CoinRenderer --constructor-args "$MASTER" "$META")
 echo "CoinRenderer   $REN"
-unset PK
 
 MASTERS=$(cast call "$REN" "masterCount()(uint256)" --rpc-url "$RPC")
 [ "${MASTERS%% *}" = "50" ] || { echo "renderer says $MASTERS masters, want 50" >&2; exit 1; }
@@ -55,9 +44,8 @@ MASTERS=$(cast call "$REN" "masterCount()(uint256)" --rpc-url "$RPC")
 mkdir -p "$HOME/.config/onenft-one"
 CONF="$HOME/.config/onenft-one/config-$NET.json"
 [ -f "$CONF" ] || echo '{}' > "$CONF"
-TMP=$(mktemp)
 jq --arg r "$REN" --arg m "$MASTER" --arg meta "$META" \
-  '.renderer=$r | .masterRenderer=$m | .coinMetadata=$meta' "$CONF" > "$TMP" && mv "$TMP" "$CONF"
+  '.renderer=$r | .masterRenderer=$m | .coinMetadata=$meta' "$CONF" | operator_write_json "$CONF"
 echo
 echo "wrote .renderer into $CONF"
 echo "next: contracts/deploy.sh $NET"

@@ -5,11 +5,15 @@
  * a lookup that fails never throws, never blocks an image, and is retried soon,
  * while a name that does not exist is remembered for hours.
  */
-import { createPublicClient, http, isAddress, type Address } from "viem";
+import { createPublicClient, http, isAddress, type Address, type Transport } from "viem";
 import { mainnet } from "viem/chains";
 import { normalize } from "viem/ens";
 
-const client = createPublicClient({ chain: mainnet, transport: http(process.env.ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com", { timeout: 2500, retryCount: 0 }) });
+/** ENS is optional. Never follow resolver-controlled HTTP gateways from the server. */
+export function createEnsClient(transport: Transport = http(process.env.ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com", { timeout: 2500, retryCount: 0 })) {
+  return createPublicClient({ chain: mainnet, ccipRead: false, transport });
+}
+const client = createEnsClient();
 
 type Reverse = { at: number; name: string | null; ok: boolean };
 type Forward = { at: number; address: Address | null; ok: boolean };

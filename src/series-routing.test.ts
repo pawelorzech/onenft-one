@@ -31,5 +31,16 @@ test("series URLs and form resolve to global token URLs through the running serv
       const page = await (await fetch(`${base}/api/mints?after=${after}`)).json();
       expect(page.head).toBe(2); expect(page.nextCursor).toBe(2); expect(page.items).toEqual([]);
     }
+    const beforeMissing = state.calls;
+    for (let i = 0; i < 20; i++) expect((await fetch(base + "/api/coin/2")).status).toBe(404);
+    expect(state.calls).toBe(beforeMissing);
+    // An existing coin spends the shared forced-read budget while the RPC is behind the receipt.
+    expect((await fetch(base + "/api/coin/1?refresh=1&afterBlock=10001")).status).toBe(200);
+    const afterForced = state.calls;
+    for (const id of [2, 3]) {
+      expect((await fetch(base + "/api/coin/" + id + "?refresh=1&afterBlock=10001")).status).toBe(503);
+    }
+    expect(state.calls).toBe(afterForced);
+    expect((await fetch(base + "/api/coin/2?refresh=1&afterBlock=10000")).status).toBe(404);
   } finally { proc.kill(); await proc.exited; rpc.stop(true); }
 });

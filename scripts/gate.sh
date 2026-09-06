@@ -6,6 +6,8 @@ bun run scripts/check-shared.ts
 (cd contracts && forge build)
 bun run typecheck
 bun test
+bun test ./scripts/operator-safe.test.ts
+for operator_script in contracts/*.sh scripts/operator-safe.sh; do bash -n "$operator_script"; done
 bun run contracts/fixtures.ts
 git diff --exit-code -- contracts/test/fixtures
 (cd contracts && forge test -vv)

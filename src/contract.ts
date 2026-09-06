@@ -262,6 +262,8 @@ export type ChainState = {
   backings: number[];
   /** Every coin that exists, by id. A redeemed coin leaves the map. */
   coins: Map<number, CoinRecord>;
+  /** Typed nonexistent-token results, with their actual read age and block. */
+  absentCoins?: Map<number, { readAt: number; readBlock: bigint }>;
   /** Unix milliseconds of the read this state came from. */
   readAt: number;
   /** Last complete ownership scan; older tokens can predate readAt. */
@@ -353,6 +355,7 @@ type ReaderClient = Pick<NonNullable<typeof client>, "getBlockNumber" | "multica
 /** Isolated state makes failed chunks atomic and lets RPC tests exercise the real loader. */
 export function createChainReader(client: ReaderClient, address: Address, now = Date.now) {
 let coins = new Map<number, CoinRecord>();
+let absentCoins = new Map<number, { readAt: number; readBlock: bigint }>();
 let allReadAt = 0;
 let allReadBlock = 0n;
 let lastSeen = 0;
@@ -458,13 +461,16 @@ async function readChainState(): Promise<ChainState> {
 
   // Every chunk answered, so the read may be written.
   const next = all ? new Map<number, CoinRecord>() : new Map(coins);
+  const absent = all ? new Map<number, { readAt: number; readBlock: bigint }>() : new Map(absentCoins);
   ids.forEach((id, i) => {
     const info = infos[i];
-    if (!info && !owners[i]) { next.delete(id); return; }
+    if (!info && !owners[i]) { next.delete(id); absent.set(id, { readAt: now(), readBlock: blockNumber }); return; }
     if (!info || !owners[i]) throw new Error(`inconsistent coin/owner at block ${blockNumber}: ${id}`);
+    absent.delete(id);
     next.set(id, { ...recordOf(id, info, owners[i], backings, Number(sealedEscape), Number(masters)), readBlock: blockNumber });
   });
   coins = next;
+  absentCoins = absent;
   lastSeen = last;
   if (all) { allReadAt = now(); allReadBlock = blockNumber; }
   fullRequested = false;
@@ -507,6 +513,7 @@ async function readChainState(): Promise<ChainState> {
     coins,
     readAt: now(),
     ownersReadAt: allReadAt,
+    absentCoins,
     ownersReadBlock: allReadBlock,
     blockNumber,
   };
@@ -534,48 +541,51 @@ export function readNow(): Promise<ChainState> {
   return store.refresh();
 }
 
-/** A visited old coin is refreshed too; callers still have a bounded wait and last-good fallback. */
-let forcedCoinAt = 0;
-export async function refreshCoin(id: number, afterBlock = 0n): Promise<ChainState | null> {
-  const hit = store.peek();
-  if (!reader || !hit || id < 1 || id >= hit.nextId) return hit;
-  if (!refreshAllowed(store.status())) return hit;
-  const coin = hit.coins.get(id);
-  const force = afterBlock > (coin?.readBlock ?? 0n) && Date.now() - forcedCoinAt >= TTL_MS;
-  if (coin && Date.now() - (coin.readAt ?? hit.readAt) < TTL_MS && !force) return hit;
-  if (force) forcedCoinAt = Date.now();
-  reader.request(id);
-  try {
-    await store.refresh();
-    if (reader.pending(id)) await store.refresh();
-  } catch {}
-  return store.peek();
-}
-
 /** Explicit refreshes respect the same failure backoff as background reads. */
 export function refreshAllowed(status: Pick<SwrStatus, "error" | "errorAt" | "failures">, now = Date.now()): boolean {
   return !status.error || status.errorAt === null || now - status.errorAt >= Math.min(60_000, 3_000 * 2 ** (status.failures - 1));
 }
 
-let holdingsRun: Promise<ChainState | null> | null = null;
-let forcedHoldingsAt = 0;
+/** One bounded explicit read for all callers per TTL, including forced post-transaction reads. */
+export function createRefreshController(reader: ReturnType<typeof createChainReader>, store: Pick<Swr<ChainState>, "peek" | "status" | "refresh">, now = Date.now) {
+  let lastAttempt = -Infinity;
+  let running: Promise<ChainState | null> | null = null;
+  const evidence = (hit: ChainState, id?: number) => id === undefined
+    ? { readAt: hit.ownersReadAt ?? 0, readBlock: hit.ownersReadBlock ?? 0n }
+    : hit.coins.get(id) ?? hit.absentCoins?.get(id) ?? (id >= hit.nextId ? { readAt: hit.readAt, readBlock: hit.blockNumber ?? 0n } : null);
+  async function refresh(id: number | undefined, afterBlock: bigint): Promise<ChainState | null> {
+    const hit = store.peek();
+    if (!hit || (id !== undefined && (!Number.isSafeInteger(id) || id < 1 || id > 9999999))) return hit;
+    const known = evidence(hit, id);
+    const enough = (v: ReturnType<typeof evidence>) => !!v && now() - (v.readAt ?? 0) < TTL_MS && afterBlock <= (v.readBlock ?? 0n);
+    if (enough(known)) return hit;
+    // Future ids without a receipt block rely on the background supply scan.
+    if (id !== undefined && id >= hit.nextId && afterBlock === 0n) return hit;
+    if (running) return running;
+    if (!refreshAllowed(store.status(), now()) || now() - lastAttempt < TTL_MS) return hit;
+    lastAttempt = now();
+    running = (async () => {
+      try {
+        if (store.status().inflight) {
+          await store.refresh();
+          const updated = store.peek();
+          if (updated && enough(evidence(updated, id))) return updated;
+        }
+        if (id === undefined) reader.requestAll(); else if (id < (store.peek()?.nextId ?? 0)) reader.request(id);
+        await store.refresh();
+      } catch {}
+      return store.peek();
+    })().finally(() => { running = null; });
+    return running;
+  }
+  return { coin: (id: number, afterBlock = 0n) => refresh(id, afterBlock), holdings: (afterBlock = 0n) => refresh(undefined, afterBlock) };
+}
+const refreshController = reader ? createRefreshController(reader, store) : null;
+export async function refreshCoin(id: number, afterBlock = 0n): Promise<ChainState | null> {
+  return refreshController ? refreshController.coin(id, afterBlock) : store.peek();
+}
 export async function refreshHoldings(afterBlock = 0n): Promise<ChainState | null> {
-  if (!reader) return null;
-  if (holdingsRun) return holdingsRun;
-  if (!refreshAllowed(store.status())) return store.peek();
-  const hit = store.peek();
-  const force = afterBlock > (hit?.ownersReadBlock ?? 0n) && Date.now() - forcedHoldingsAt >= TTL_MS;
-  if (hit && Date.now() - (hit.ownersReadAt ?? 0) < TTL_MS && !force) return hit;
-  if (force) forcedHoldingsAt = Date.now();
-  holdingsRun = (async () => {
-    try {
-      if (store.status().inflight) await store.refresh();
-      reader.requestAll();
-      await store.refresh();
-    } catch {}
-    return store.peek();
-  })().finally(() => { holdingsRun = null; });
-  return holdingsRun;
+  return refreshController ? refreshController.holdings(afterBlock) : store.peek();
 }
 
 export function dataFreshness(chain: ChainState, coin?: CoinRecord) {

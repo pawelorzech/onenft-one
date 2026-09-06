@@ -2,7 +2,7 @@
 # Deploys OneCoin. Usage: contracts/deploy.sh sepolia|mainnet
 #
 # Reads ~/.config/onenft-one/config-<net>.json for the vault, USDC, VRF coordinator, key hash,
-# subscription id and the renderer address. Deployer secret from Keychain (onenft-deployer),
+# subscription id and the renderer address. Deployer uses the encrypted onenft-deployer Foundry keystore,
 # author address from ~/.config/onenft/author.json. Writes ~/.config/onenft-one/deploy-<net>.json.
 #
 # The renderer must already be on chain and its address must be in the config. Deploy it first
@@ -11,6 +11,7 @@
 # After this script the subscription still has to be told about the new consumer: add the token
 # address to VRF subscription ONE_SUB_ID at vrf.chain.link, or nothing will ever reveal.
 set -euo pipefail
+source "$(dirname "$0")/../scripts/operator-safe.sh"
 NET="${1:?sepolia|mainnet}"
 case "$NET" in
   sepolia) RPC=https://sepolia.base.org; CHAIN=84532;;
@@ -50,20 +51,34 @@ EOF
 exit 1; }
 
 need() { jq -er ".$1" "$CONF" 2>/dev/null || { echo "config $CONF has no .$1" >&2; exit 1; }; }
-export ONE_NAME=$(jq -r '.name // "ONE"' "$CONF")
-export ONE_SYMBOL=$(jq -r '.symbol // "ONE"' "$CONF")
-export ONE_USDC=$(need usdc)
-export ONE_VAULT=$(need vault)
-export ONE_COORDINATOR=$(need coordinator)
-export ONE_KEY_HASH=$(need keyHash)
-export ONE_SUB_ID=$(need subId)
-export ONE_RENDERER=$(need renderer)
-export ONE_VRF_FEE_WEI=$(need vrfFeeWei)
-export ONE_CALLBACK_GAS=$(need callbackGas)
-export ONE_AUTHOR=$(jq -r .address "$HOME/.config/onenft/author.json")
+ONE_NAME=$(jq -r '.name // "ONE"' "$CONF")
+export ONE_NAME
+ONE_SYMBOL=$(jq -r '.symbol // "ONE"' "$CONF")
+export ONE_SYMBOL
+ONE_USDC=$(need usdc)
+export ONE_USDC
+ONE_VAULT=$(need vault)
+export ONE_VAULT
+ONE_COORDINATOR=$(need coordinator)
+export ONE_COORDINATOR
+ONE_KEY_HASH=$(need keyHash)
+export ONE_KEY_HASH
+ONE_SUB_ID=$(need subId)
+export ONE_SUB_ID
+ONE_RENDERER=$(need renderer)
+export ONE_RENDERER
+ONE_VRF_FEE_WEI=$(need vrfFeeWei)
+export ONE_VRF_FEE_WEI
+ONE_CALLBACK_GAS=$(need callbackGas)
+export ONE_CALLBACK_GAS
+ONE_AUTHOR=$(operator_json_address "$HOME/.config/onenft/author.json" address)
+export ONE_AUTHOR
 
-PK=$(security find-generic-password -a onenft-deployer -s onenft-deployer -w)
-DEPLOYER=$(cast wallet address --private-key "$PK")
+for a in "$ONE_USDC" "$ONE_VAULT" "$ONE_COORDINATOR" "$ONE_RENDERER" "$ONE_AUTHOR"; do operator_address "$a" >/dev/null; done
+[[ "$ONE_KEY_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]] || { echo "Invalid VRF key hash" >&2; exit 1; }
+for n in "$ONE_SUB_ID" "$ONE_VRF_FEE_WEI" "$ONE_CALLBACK_GAS"; do [[ "$n" =~ ^[0-9]{1,78}$ ]] || { echo "Invalid numeric VRF configuration" >&2; exit 1; }; done
+operator_signer deployer
+DEPLOYER=$(operator_address "$(cast wallet address "${SIGNER_ARGS[@]}")")
 BAL=$(cast balance "$DEPLOYER" --rpc-url "$RPC" --ether)
 
 echo "network     $NET (chain $CHAIN)"
@@ -98,12 +113,11 @@ if [ "$NET" = "mainnet" ]; then
   [ "$ANSWER" = "mainnet" ] || { echo "stopped"; exit 1; }
 fi
 
-LOG="/tmp/onenft-one-deploy-$NET.log"
-forge script script/Deploy.s.sol --rpc-url "$RPC" --broadcast --private-key "$PK" 2>&1 | tee "$LOG" | grep -E "OneCoin|Error" || true
-TOKEN=$(grep -E "^[[:space:]]*OneCoin " "$LOG" | head -1 | awk '{print $2}')
+LOG="$OPERATOR_TMP_DIR/onenft-one-deploy-$NET.log"
+forge script script/Deploy.s.sol --rpc-url "$RPC" --broadcast "${SIGNER_ARGS[@]}" 2>&1 | tee "$LOG"
+TOKEN=$(operator_log_address "$LOG" OneCoin)
 [ -n "$TOKEN" ] || { echo "token deploy failed, see $LOG" >&2; exit 1; }
 echo "OneCoin $TOKEN"
-unset PK
 
 mkdir -p "$HOME/.config/onenft-one"
 jq -n --arg net "$NET" --argjson chain "$CHAIN" --arg token "$TOKEN" --arg ren "$ONE_RENDERER" \
@@ -112,7 +126,7 @@ jq -n --arg net "$NET" --argjson chain "$CHAIN" --arg token "$TOKEN" --arg ren "
   --arg author "$ONE_AUTHOR" --arg deployer "$DEPLOYER" --arg at "$(date -u +%FT%TZ)" \
   '{network:$net,chainId:$chain,OneCoin:$token,CoinRenderer:$ren,usdc:$usdc,vault:$vault,
     vrfCoordinator:$coord,keyHash:$keyHash,subId:$subId,vrfFeeWei:$fee,callbackGas:$cbg,author:$author,deployer:$deployer,at:$at}' \
-  > "$HOME/.config/onenft-one/deploy-$NET.json"
+  | operator_write_json "$HOME/.config/onenft-one/deploy-$NET.json"
 cat "$HOME/.config/onenft-one/deploy-$NET.json"
 
 echo
