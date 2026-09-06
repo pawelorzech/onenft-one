@@ -602,7 +602,7 @@ function idsOf(r){var out=[];(r.logs||[]).forEach(function(l){
   out.push(parseInt(l.topics[1],16));});
   return out.filter(function(v,i,a){return a.indexOf(v)===i}).sort(function(a,b){return a-b});}
 function tile(id,open){
-  return '<'+(open?'a href="/coin/'+id+'"':'div')+' class="px" data-coin="'+id+'"><img src="/coin/'+id+'.svg?t='+Date.now()+'" alt="Coin '+id+'" width="140" height="140"><div class="cap"><b>#'+String(id).padStart(5,'0')+'</b> '+(open?'open':'sealed')+'</div></'+(open?'a':'div')+'>';
+  return '<'+(open?'a href="/coin/'+id+'"':'div')+' class="px" data-coin="'+id+'"><img src="/coin/'+id+'.svg?t='+Date.now()+'" alt="Coin '+id+'" width="140" height="140" data-tries="0" onerror="var n=+this.dataset.tries;if(n<12){this.dataset.tries=n+1;var el=this;setTimeout(function(){el.src=\'/coin/'+id+'.svg?t=\'+Date.now()},5000)}"><div class="cap"><b>#'+String(id).padStart(5,'0')+'</b> '+(open?'open':'sealed')+'</div></'+(open?'a':'div')+'>';
 }
 function drawSealed(ids,open){if(!sealedList)return;sealedBox.hidden=false;sealedList.innerHTML=ids.map(function(id){return tile(id,open.indexOf(id)>=0)}).join('')}
 async function watch(ids){
