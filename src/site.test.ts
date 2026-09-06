@@ -6,7 +6,7 @@
  * are theirs, and a hostile ENS name cannot break out of an attribute.
  */
 import { test, expect } from "bun:test";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable, eth, ethOf } from "./site.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable, eth, ethOf, IMG_Q } from "./site.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
 import { stateJson, holderJson, specJson, coinJson } from "./api.ts";
 import { holderFacts } from "./facts.ts";
@@ -458,6 +458,25 @@ test("the spec holds the tables the generator needs", () => {
   expect(s.masters.length).toBe(50);
   expect(s.backings).toEqual([5, 10, 25, 50]);
   expect(s.traits.find((t) => t.trait === "Material")!.values.length).toBe(MATERIALS.length);
+});
+
+test("every coin image URL names the contract it came from", () => {
+  // The tag comes from CONTRACT_ADDRESS, which no test sets, so here it is empty and every URL
+  // is bare. What must hold either way: the URL a page emits and the URL the JSON emits agree.
+  const c = fakeChain();
+  const pages = [homePage(c, OK), coinPage(c, c.coins.get(2)!, new Map(), OK), holderPage(c, B, B, new Map(), OK), coinsPage(c, 1, OK), mastersPage(c, new Map(), OK)];
+  const seen: string[] = [];
+  for (const h of pages) for (const m of h.matchAll(/\/(?:coin\/\d+(?:\.svg|\.png|-1024\.png)|newest\.(?:svg|png))(\?c=[0-9a-f]{8})?/g)) seen.push(m[1] ?? "");
+  expect(seen.length).toBeGreaterThan(15);
+  expect(new Set(seen).size).toBe(1);
+  expect(seen[0]).toBe(IMG_Q);
+  const j = coinJson(c.coins.get(2)!, c, new Map(), OK);
+  for (const u of [j.image, j.png, j.card]) expect(u.endsWith(IMG_Q) || IMG_Q === "").toBe(true);
+  expect(j.image).toBe(`https://one.onenft.click/coin/2.svg${IMG_Q}`);
+  expect(stateJson(c, undefined, OK).recent[0].image).toBe(`https://one.onenft.click/coin/3.svg${IMG_Q}`);
+  expect(holderJson(B, c, new Map(), OK).coins[0].image).toBe(`https://one.onenft.click/coin/3.svg${IMG_Q}`);
+  // The tag is the first eight hex of the contract, and the mint script carries the same one.
+  expect(homePage(c, OK)).toContain(`"imgq":${JSON.stringify(IMG_Q)}`);
 });
 
 test("every inline script parses, so a broken mint button cannot ship", () => {

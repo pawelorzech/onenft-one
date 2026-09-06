@@ -1,7 +1,7 @@
 /** JSON for other people's code and the hub. Everything here is derived from the chain; nothing is stored. */
 import { YIELD_STEPS, MASTERS, fingerprint, roman } from "./coin.ts";
 import {
-  RISK, factsOf,
+  IMG_Q, RISK, factsOf,
   coinIds, coinsOf, explorer, openseaCoin, type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { SITE, TABLES, oneInOf, rarestOf, isAuthor, redeemable, type Names, NO_NAMES } from "./site.ts";
@@ -54,9 +54,9 @@ export function coinJson(c: CoinRecord, chain: ChainState, names: Names = NO_NAM
     /** The current holder is the author's wallet. */
     treasury: isAuthor(chain, c.owner),
     palette: coin.palette,
-    image: `https://${SITE}/coin/${c.id}.svg`,
-    png: `https://${SITE}/coin/${c.id}-1024.png`,
-    card: `https://${SITE}/coin/${c.id}.png`,
+    image: `https://${SITE}/coin/${c.id}.svg${IMG_Q}`,
+    png: `https://${SITE}/coin/${c.id}-1024.png${IMG_Q}`,
+    card: `https://${SITE}/coin/${c.id}.png${IMG_Q}`,
     url: `https://${SITE}/coin/${c.id}`,
     opensea: openseaCoin(chain.chainId, chain.address, c.id),
     explorer: `${explorer(chain.chainId)}/nft/${chain.address}/${c.id}`,

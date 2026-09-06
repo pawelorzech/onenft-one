@@ -6,7 +6,7 @@
  * /api/state and /api/holder the same way.
  */
 import { MASTERS } from "./coin.ts";
-import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
+import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, IMG_V, IMG_Q, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
 import { coinOfSeed, placeholderCoin } from "./preview.ts";
 import { coinOf } from "./token.ts";
 import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
@@ -25,6 +25,9 @@ const html = (s: string, status = 200) => new Response(s, { status, headers: { "
 const svg = (s: string, immutable: boolean) => new Response(s, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=60", "access-control-allow-origin": "*" } });
 const png = (b: Uint8Array, immutable: boolean) => new Response(b as Uint8Array<ArrayBuffer>, { headers: { "content-type": "image/png", "cache-control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300", "access-control-allow-origin": "*" } });
 const json = (o: unknown, maxAge = 15, status = 200) => new Response(JSON.stringify(o, null, 1), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": status === 200 && maxAge > 0 ? `public, max-age=${maxAge}` : "no-store", "access-control-allow-origin": "*" } });
+/** An image with a chosen lifetime, for the coin routes: how long depends on the URL's tag. */
+const svgFor = (s: string, maxAge: number) => new Response(s, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": `public, max-age=${maxAge}`, "access-control-allow-origin": "*" } });
+const pngFor = (b: Uint8Array, maxAge: number) => new Response(b as Uint8Array<ArrayBuffer>, { headers: { "content-type": "image/png", "cache-control": `public, max-age=${maxAge}`, "access-control-allow-origin": "*" } });
 const text = (s: string, status = 200) => new Response(s, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 const redirect = (to: string, status = 302) => new Response(null, { status, headers: { location: to } });
 
@@ -108,6 +111,8 @@ async function route(url: URL): Promise<Response> {
   if (path === "/newest.svg" || path === "/newest.png") {
     const newest = chain ? newestCoin(chain) : null;
     const c = newest ? coinOf(newest) : placeholderCoin();
+    // /newest changes with every mint, so the tag does not make it cacheable; it only keeps the
+    // last contract's copy out of the way.
     if (path === "/newest.svg") return svg(c.svg, false);
     if (!newest) {
       const f = factsOf(chain);
@@ -129,17 +134,22 @@ async function route(url: URL): Promise<Response> {
     }
     const coin = coinOf(c);
     if (m[1]) return json(coinJson(c, chain!, await namesFor(chain, c.owner ? [c.owner] : []), status), c.sealed ? 0 : 15);
+    // A coin's image is only worth caching when the URL names the contract it came from: ids
+    // restart at 1 with a new one. It is never immutable, because the yield ring grows with the
+    // coin's lifetime yield, and a sealed coin changes the moment its seed lands.
+    const tagged = IMG_V !== "" && url.searchParams.get("c") === IMG_V;
+    const hold = tagged && !c.sealed ? 3600 : 60;
     if (m[3] === ".svg") {
       const y = url.searchParams.get("yield");
       if (y !== null && !c.sealed) {
         const bps = Math.min(100000, Math.max(0, Number(y) || 0));
         return svg(coinOfSeed(c.seed, bps, c.master).svg, true);
       }
-      return svg(coin.svg, false);
+      return svgFor(coin.svg, hold);
     }
     const key = `coin${id}-${c.yieldBps}-${c.sealed ? 1 : 0}`;
-    if (m[3] === ".png") return png(cardPng(key, `#${pad5(id)}`, c.sealed ? "sealed coin" : coin.masterName ? `Master Coin ${coin.masterName}` : "coin", `${c.backing} USDC, yield ${bpsPct(c.yieldBps)}${c.sealed ? "" : `, ${coin.traits.material}`}`, coin), false);
-    if (m[3] === "-1024.png") return png(squarePng(key, coin), false);
+    if (m[3] === ".png") return pngFor(cardPng(key, `#${pad5(id)}`, c.sealed ? "sealed coin" : coin.masterName ? `Master Coin ${coin.masterName}` : "coin", `${c.backing} USDC, yield ${bpsPct(c.yieldBps)}${c.sealed ? "" : `, ${coin.traits.material}`}`, coin), hold);
+    if (m[3] === "-1024.png") return pngFor(squarePng(key, coin), hold);
     return html(coinPage(chain!, c, await namesFor(chain, c.owner ? [c.owner] : []), status));
   }
 

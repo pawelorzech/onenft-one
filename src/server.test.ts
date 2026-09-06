@@ -82,6 +82,14 @@ test("dead RPC: the process boots, the images answer, counts are unknown, coin a
   expect(hj.status).toBe(503);
   expect((await hj.json()).error).toBe("the chain did not answer");
 
+  // Ids restart with a new contract, so every image URL the pages emit names this one.
+  expect(home).toContain("/newest.svg?c=11111111");
+  expect(home).toContain("/newest.png?c=11111111");
+  expect(await (await fetch(`${base}/how`)).text()).toContain("?c=11111111");
+  // The tag is for caches, not for the router: the path still resolves with it and without it.
+  expect((await fetch(`${base}/master/0.svg?c=11111111`)).status).toBe(200);
+  expect((await fetch(`${base}/newest.svg?c=deadbeef`)).status).toBe(200);
+
   expect((await fetch(`${base}/nope`)).status).toBe(404);
   const apiNope = await fetch(`${base}/api/nope`);
   expect(apiNope.status).toBe(404);
@@ -125,6 +133,9 @@ test("no contract: a plain renderer, ready, every page says minting opens with t
   }
   const home = await (await fetch(`${base}/`)).text();
   expect(home).toContain("Minting opens with the contract");
+  // With no contract there is nothing to tag, so the URLs stay bare.
+  expect(home).toContain('href="/newest.svg"');
+  expect(home).not.toContain("?c=");
   expect(home).not.toContain("The chain did not answer");
   expect((await fetch(`${base}/coin/1`)).status).toBe(404);
   expect((await fetch(`${base}/api/coin/1`)).status).toBe(404);
@@ -135,6 +146,8 @@ test("no contract: a plain renderer, ready, every page says minting opens with t
   expect(st.recent).toEqual([]);
   expect((await fetch(`${base}/newest.png`)).headers.get("content-type")).toBe("image/png");
   const r = await fetch(`${base}/`);
+  // A page is never cached: it carries counts that move with every mint.
+  expect(r.headers.get("cache-control")).toBe("no-store");
   expect(r.headers.get("x-frame-options")).toBe("SAMEORIGIN");
   expect(r.headers.get("x-content-type-options")).toBe("nosniff");
 });

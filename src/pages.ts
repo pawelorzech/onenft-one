@@ -5,7 +5,7 @@ import {
   usdc, bpsPct, pad5, traitList, moneyBlock, coinTags, coinActions, actionScript, isAuthor, factTile, type Names, NO_NAMES,
 } from "./site.ts";
 import { whoBlock, connectScript, downloadScript, downloadBar, sizePicker, nameHeading } from "./wallet.ts";
-import { factsOf, coinsOf, explorer, openseaCoin, openseaWallet, type ChainState, type ChainStatus } from "./contract.ts";
+import { IMG_Q, factsOf, coinsOf, explorer, openseaCoin, openseaWallet, type ChainState, type ChainStatus } from "./contract.ts";
 import { coinOf } from "./token.ts";
 import { holderFacts } from "./facts.ts";
 
@@ -22,7 +22,7 @@ ${whoBlock(Boolean(chain))}
 ${footer()}
 </main>
 ${connectScript("/", true)}`;
-  return layout(`Your coins | ${NAME}`, pageColors(chain), body, "/newest.png", "/yours");
+  return layout(`Your coins | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/yours");
 }
 
 /** One wallet: its coins, what they hold, and the two things its owner can do with each. */
@@ -36,7 +36,7 @@ export function holderPage(chain: ChainState, who: Address, handle: string, name
     const coin = coinOf(c);
     const links = [`<a href="/coin/${c.id}">Coin page</a>`, `<a href="${openseaCoin(chain.chainId, chain.address, c.id)}">OpenSea</a>`, `<a href="${explorer(chain.chainId)}/nft/${chain.address}/${c.id}">Basescan</a>`].join(", ");
     return `<div class="tok" id="coin-${c.id}">
-<a href="/coin/${c.id}"><img class="px" src="/coin/${c.id}.svg" width="256" height="256" alt="Coin ${pad5(c.id)}" loading="lazy"></a>
+<a href="/coin/${c.id}"><img class="px" src="/coin/${c.id}.svg${IMG_Q}" width="256" height="256" alt="Coin ${pad5(c.id)}" loading="lazy"></a>
 <div class="meta">
 <div class="num syne">#${pad5(c.id)}${coinTags(coin, c)}</div>
 <p class="small" style="margin:0">${c.sealed ? "sealed, waiting for the seed from Chainlink VRF" : coin.masterName ? `Master Coin ${esc(coin.masterName)}` : esc(coin.traits.material)}, series ${c.series}, ${c.backing} USDC class, yield ${bpsPct(c.yieldBps)}</p>
@@ -60,7 +60,7 @@ ${footer()}
 </main>
 ${connectScript("/")}
 ${rows.length ? `${downloadScript()}${actionScript(chain)}` : ""}`;
-  return layout(`${rawName} | ${NAME}`, pageColors(chain), body, "/newest.png", `/${handle}`, `${mine.length} ${plural(mine.length, "coin", "coins")} of ${SITE} held by ${rawName}.`);
+  return layout(`${rawName} | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, `/${handle}`, `${mine.length} ${plural(mine.length, "coin", "coins")} of ${SITE} held by ${rawName}.`);
 }
 
 export function assetsPage(chain: ChainState | null, status: ChainStatus | null = null): string {
@@ -85,5 +85,5 @@ ${topBar("Assets")}
 <p class="small">A series is ${num(f.seriesSize)} coins. <a href="/">Back to the coins</a></p>
 ${footer()}
 </main>`;
-  return layout(`Assets | ${NAME}`, pageColors(chain), body, "/newest.png", "/assets");
+  return layout(`Assets | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/assets");
 }

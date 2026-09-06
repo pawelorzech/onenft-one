@@ -4,6 +4,7 @@
  * step with the hub's wallet page, with "coin" as the unit.
  */
 import { esc } from "./site.ts";
+import { IMG_Q } from "./contract.ts";
 
 export const FILE_PREFIX = "one";
 export const PIXEL = true;
@@ -19,8 +20,8 @@ export function sizePicker(): string {
 }
 /** The download bar under one coin. SVG is the file itself; PNG without JavaScript is a 1024 pixel PNG the server draws; JPEG needs JavaScript. */
 export function downloadBar(id: number, bg: string): string {
-  const d = `data-id="${id}" data-unit="coin" data-src="/coin/${id}.svg" data-bg="${bg}"`;
-  return `<div class="dl"><span class="lab">Download coin ${id}</span><a class="btn" href="/coin/${id}.svg" download="${FILE_PREFIX}-coin-${id}.svg" aria-label="SVG of coin ${id}">SVG</a><a class="btn" href="/coin/${id}-1024.png" download="${FILE_PREFIX}-coin-${id}-1024.png" data-dl="png" ${d} aria-label="PNG of coin ${id}">PNG</a><a class="btn" href="/coin/${id}-1024.png" data-dl="jpeg" ${d} hidden data-js aria-label="JPEG of coin ${id}">JPEG</a><a class="btn" href="/api/coin/${id}">JSON</a><noscript><span class="small">JPEG needs JavaScript; the PNG link saves a 1024 pixel PNG.</span></noscript></div>`;
+  const d = `data-id="${id}" data-unit="coin" data-src="/coin/${id}.svg${IMG_Q}" data-bg="${bg}"`;
+  return `<div class="dl"><span class="lab">Download coin ${id}</span><a class="btn" href="/coin/${id}.svg${IMG_Q}" download="${FILE_PREFIX}-coin-${id}.svg" aria-label="SVG of coin ${id}">SVG</a><a class="btn" href="/coin/${id}-1024.png${IMG_Q}" download="${FILE_PREFIX}-coin-${id}-1024.png" data-dl="png" ${d} aria-label="PNG of coin ${id}">PNG</a><a class="btn" href="/coin/${id}-1024.png${IMG_Q}" data-dl="jpeg" ${d} hidden data-js aria-label="JPEG of coin ${id}">JPEG</a><a class="btn" href="/api/coin/${id}">JSON</a><noscript><span class="small">JPEG needs JavaScript; the PNG link saves a 1024 pixel PNG.</span></noscript></div>`;
 }
 export function nameHeading(name: string): string {
   const size = name.length <= 11 ? "" : name.length <= 16 ? ' style="font-size:26px"' : ' style="font-size:20px;letter-spacing:-.02em"';

@@ -144,6 +144,15 @@ export const REVERTS: [string, string][] = [
 /** The first topic of `Minted`. The browser reads the new coins' ids from it; a mint receipt also carries ERC-721 `Transfer` logs, and those must not be mistaken for it. */
 export const MINTED_TOPIC = toEventSelector("Minted(uint256,address,uint8,uint256)");
 
+/**
+ * The tag on every coin image URL: the first eight hex of the contract. Ids restart at 1 with a
+ * new contract, so without it a browser or a CDN that cached coin 1 from the old one would show
+ * the wrong coin for as long as its copy lived. The server ignores the query; it exists only to
+ * make the URL of coin 1 on this contract different from coin 1 on the last one.
+ */
+export const IMG_V = (CONTRACT || "").slice(2, 10).toLowerCase();
+export const IMG_Q = IMG_V ? `?c=${IMG_V}` : "";
+
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 /** One coin as the chain holds it: the art, the money and the holder. */
