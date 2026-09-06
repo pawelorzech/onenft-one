@@ -190,6 +190,52 @@ contract CoinRendererTest is Test {
         }
     }
 
+    /// No fixture pairs a master with a yield ring: the master cases all sit at
+    /// yieldBps 0, and the yield cases are all procedural. That combination is what
+    /// the token asks for once a master coin has earned, so it is swept here over
+    /// every master at the 100000 bps cap the token enforces.
+    function test_EveryMasterFitsTheBudgetAtTheYieldCap() public view {
+        uint256 worstRing;
+        uint256 worstRingIndex;
+        uint256 worstFlat;
+        uint256 worstFlatIndex;
+        for (uint8 i = 0; i < 50; i++) {
+            uint256 before = gasleft();
+            renderer.tokenURI(masterView(i, 100000));
+            uint256 ring = before - gasleft();
+            if (ring > worstRing) { worstRing = ring; worstRingIndex = i; }
+
+            before = gasleft();
+            renderer.tokenURI(masterView(i, 0));
+            uint256 flat = before - gasleft();
+            if (flat > worstFlat) { worstFlat = flat; worstFlatIndex = i; }
+        }
+        console.log("worst master flat, index:", worstFlatIndex);
+        console.log("worst master flat, gas:", worstFlat);
+        console.log("worst master with the ring, index:", worstRingIndex);
+        console.log("worst master with the ring, gas:", worstRing);
+        assertLt(worstRing, 45_000_000, "worst master at the yield cap");
+        // Alpha is the heaviest of the fifty, and fixture 103 is the reason the
+        // gas tests name it. Assert the pairing so a reordering of the recipes
+        // fails here rather than quietly moving the worst case somewhere else.
+        assertEq(worstRingIndex, 25, "heaviest master index");
+        assertEq(worstFlatIndex, 25, "heaviest master index without the ring");
+        assertEq(renderer.masterName(25), "Alpha", "master 25 is Alpha");
+    }
+
+    /// Master `i` over fixture 103's seed, backed and earning, as the token would
+    /// build it once that coin has run up lifetime yield.
+    function masterView(uint8 i, uint32 bps) internal pure returns (CoinView memory c) {
+        c.seed = 210566752294031767;
+        c.number = 604;
+        c.series = 1;
+        c.backing = 50;
+        c.yieldBps = bps;
+        c.master = i;
+        c.fundedUnits = 50_000_000;
+        c.lifetimeUnits = 500_000_000;
+    }
+
     /// The renderer forwards the master table, and every master index must render.
     function test_MasterSurface() public {
         assertEq(renderer.masterCount(), 50, "master count");
