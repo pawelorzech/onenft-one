@@ -1,0 +1,20 @@
+{
+  "name": "onenft-one",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json",
+    "sim": "bun run scripts/sim.ts",
+    "sheet": "bun run scripts/sheet.ts"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "viem": "^2.56.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "typescript": "^5.9.3"
+  }
+}

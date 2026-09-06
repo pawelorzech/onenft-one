@@ -1,0 +1,7 @@
+node_modules/
+out/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+CLAUDE.local.md
+out/
