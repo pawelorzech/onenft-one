@@ -34,15 +34,16 @@ Write one first, for example:
   "subId": "… the VRF v2.5 subscription id, decimal",
   "renderer": "0x… the CoinRenderer already on chain",
   "vrfFeeWei": "50000000000000",
-  "callbackGas": "800000"
+  "callbackGas": "2500000"
 }
-vrfFeeWei is the least ETH a mint must send on to the VRF subscription, in decimal wei.
+vrfFeeWei is the least ETH a mint must send on to the VRF subscription per coin, in
+decimal wei, so a batch of forty sends forty times it.
 50000000000000 is 0.00005 ETH, the figure docs/DECISIONS.md records for Base.
-callbackGas is the gas the VRF callback is given, between 800000 and 2500000. Chainlink holds
-callbackGas times the lane's maximum gas price, plus its premium, against the subscription
-before it will answer at all, so a generous limit on an expensive lane leaves coins sealed. Ask
-for what a ten coin batch needs and not more. 800000 is the floor and it is the right answer on
-both networks; the worst callback measured is 408324.
+callbackGas is the ceiling on what any one callback may be given, between 2120000 and 2500000.
+Each request asks only for what its own batch needs, 200000 plus 48000 a coin, so a single coin
+holds a fraction of what a batch of forty does. Chainlink holds the figure a request asks for,
+times the lane's maximum gas price plus its premium, against the subscription before it will
+answer. 2500000 is the right answer on both networks.
 The mainnet coordinator above and the Sepolia one, 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE,
 are what docs/CONTRACTS.md records. Check both against docs.chain.link before you deploy.
 EOF

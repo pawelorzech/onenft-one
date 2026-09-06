@@ -39,11 +39,14 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// chosen sealed coins of a batch to push the coins behind them onto a master slot. The second,
 /// with the randomness fee the minter pays in ETH at mint, is what stops a bot from cycling the
 /// same USDC through the urn, keeping the masters, burning the rest and billing the author's VRF
-/// subscription for every round. Claiming yield stays open at any time.
+/// subscription for every round. The fee is per coin, so a batch of forty pays forty times it
+/// and the subscription grows with the volume it has to answer for. Claiming yield stays open at
+/// any time.
 ///
 /// A hundred founder coins a series are reserved for the author, free. Their backing is not paid at
 /// mint: the contract fills it from the author's ten percent of yield, oldest founder coin
-/// first, until each holds fifty USDC. Nobody else's money ever backs one. The reserve is open
+/// first, until each holds fifty USDC. A founder coin that is burned drops out of that queue and
+/// the ones behind it move up. Nobody else's money ever backs one. The reserve is open
 /// only over the first thousand coins of a series, the first four percent, and shuts after that
 /// whatever is left in it. So the author cannot wait to see how the urn is running before taking
 /// the free coins: everyone reads the same odds, and they are read early or not at all.
@@ -65,8 +68,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @notice Founder coins can only be minted in the first four percent of a series. After
     /// coin 1000 the reserve is shut, whatever is left of it.
     uint256 public constant FOUNDER_WINDOW = 1000;
-    /// @notice Coins per mint transaction. The cap is the gas of the VRF callback, not policy.
-    uint8 public constant MAX_BATCH = 10;
+    /// @notice Coins per mint transaction. The cap is the gas of the VRF callback, not policy:
+    /// forty coins fit inside Chainlink's 2,500,000 limit with room, fifty do not.
+    uint8 public constant MAX_BATCH = 40;
     /// @notice The author's cut of yield, in basis points. Ten percent.
     uint256 public constant FEE_BPS = 1000;
     uint256 public constant BPS = 10000;
@@ -81,12 +85,19 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     uint8 public constant FOUNDER_CLASS = 3;
     /// @notice What a founder coin is filled to from the fees, in USDC units.
     uint256 public constant FOUNDER_BACKING = BACKING_50;
-    /// @notice The least `callbackGas` a deploy may ask for. The costly callback is a batch of
-    /// ten that straddles a series boundary, because it writes into two urns: measured at
-    /// 408,324 gas. This floor keeps that under sixty percent of what the coordinator grants,
-    /// which matters because a callback that runs out of gas leaves those coins sealed and a
-    /// retry would fail the same way every time.
-    uint32 public constant MIN_CALLBACK_GAS = 800_000;
+    /// @notice What a callback costs before any coin: the request lookup, the batch check and
+    /// the call itself.
+    uint32 public constant CALLBACK_BASE = 200_000;
+    /// @notice What each coin of the batch adds: one urn draw and one coin written.
+    /// Measured across batch sizes, the worst case is a batch that straddles a series boundary
+    /// and so writes into two urns: 83,929 gas for one coin and 1,417,149 for forty, about
+    /// 34,200 a coin over a fixed 50,000. These two numbers carry a third more than that, and
+    /// Foundry undercounts cold storage, which is the rest of the margin.
+    uint32 public constant CALLBACK_PER_COIN = 48_000;
+    /// @notice The least `callbackGas` a deploy may ask for: enough for a full batch. Below this
+    /// the cap would bite before the work was done, and a callback that runs out of gas leaves
+    /// those coins sealed with every retry failing the same way.
+    uint32 public constant MIN_CALLBACK_GAS = CALLBACK_BASE + CALLBACK_PER_COIN * uint32(MAX_BATCH);
     /// @notice The most it may ask for. Chainlink holds the lane's worst case, callbackGas times
     /// the lane's maximum gas price plus the premium, against the subscription balance before it
     /// will answer at all, so asking for headroom nobody needs stalls the request.
@@ -122,13 +133,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     bytes32 public immutable keyHash;
     /// @notice The VRF v2.5 subscription that pays for the requests.
     uint256 public immutable subId;
-    /// @notice The least ETH a mint must send. The whole value sent goes on to the subscription
-    /// in the same transaction, so the minter pays for their own randomness.
+    /// @notice The least ETH a mint must send per coin. The whole value sent goes on to the
+    /// subscription in the same transaction, so the minter pays for their own randomness and the
+    /// subscription's balance grows with the volume it has to answer for.
     uint256 public immutable vrfFeeWei;
-    /// @notice Gas the coordinator is asked to give `fulfillRandomWords`, enough for a full batch
-    /// of MAX_BATCH coins and no more. Set at deploy because the right number depends on the
-    /// lane: the coordinator will not answer until the subscription covers this figure at the
-    /// lane's maximum gas price, so a generous limit on an expensive lane leaves coins sealed.
+    /// @notice The most gas any one callback may be given. Each request asks for what its own
+    /// batch needs and no more, so a small mint holds a small amount of the subscription. Set at
+    /// deploy because the ceiling depends on the lane: the coordinator will not answer until the
+    /// subscription covers the figure a request asks for at the lane's maximum gas price.
     uint32 public immutable callbackGas;
 
     // ---- storage ----
@@ -299,11 +311,11 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
 
     /// @dev The place the next coin of `series` would take inside it, 1..SERIES_SIZE. A series
     /// already behind reads as SERIES_SIZE + 1, one past its end, and one not yet reached reads
-    /// as 0, so no band is ever open in either.
+    /// as 0, so the founder window never reads open in either.
     function _nextPosition(uint256 series) internal view returns (uint256) {
         uint256 current = seriesOf(nextId);
         if (series < current) return SERIES_SIZE + 1;
-        // A series nobody has reached yet holds no position at all, so no band in it is open.
+        // A series nobody has reached yet holds no position at all, so its window reads shut.
         if (series > current) return 0;
         return numberOf(nextId);
     }
@@ -323,6 +335,15 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         closesAt = FOUNDER_WINDOW;
         uint256 position = _nextPosition(series);
         open = left > 0 && position > 0 && position <= FOUNDER_WINDOW;
+    }
+
+    /// @notice The gas one request asks the coordinator for, which is what the subscription has
+    /// to cover before it will answer.
+    /// @return the limit for a batch of `count` coins, never above `callbackGas`
+    function callbackGasFor(uint256 count) public view returns (uint32) {
+        uint256 want = uint256(CALLBACK_BASE) + uint256(CALLBACK_PER_COIN) * count;
+        uint256 cap = callbackGas;
+        return uint32(want > cap ? cap : want);
     }
 
     /// @return the backing of a class in USDC units, six decimals
@@ -356,8 +377,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         nonReentrant
         returns (uint256 firstId)
     {
-        if (msg.value < vrfFeeWei) revert FeeTooLow(vrfFeeWei, msg.value);
         if (count == 0 || count > MAX_BATCH) revert BadCount(count);
+        uint256 want = vrfFeeWei * count;
+        if (msg.value < want) revert FeeTooLow(want, msg.value);
         if (to == address(0)) revert BadRecipient();
         uint256 backing = backingOf(backingClass);
         uint256 total = backing * count;
@@ -410,8 +432,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         nonReentrant
         returns (uint256 firstId)
     {
-        if (msg.value < vrfFeeWei) revert FeeTooLow(vrfFeeWei, msg.value);
         if (count == 0 || count > MAX_BATCH) revert BadCount(count);
+        uint256 want = vrfFeeWei * count;
+        if (msg.value < want) revert FeeTooLow(want, msg.value);
         if (to == address(0)) revert BadRecipient();
         firstId = nextId;
         uint256 lastId = firstId + count - 1;
@@ -474,7 +497,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
                 keyHash: keyHash,
                 subId: subId,
                 requestConfirmations: REQUEST_CONFIRMATIONS,
-                callbackGasLimit: callbackGas,
+                callbackGasLimit: callbackGasFor(count),
                 numWords: count,
                 extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: NATIVE_PAYMENT}))
             })
@@ -849,13 +872,6 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// still reads false. `lockRenderer` is the one sanctioned way to freeze.
     function renounceOwnership() public pure override {
         revert OwnershipIsPermanent();
-    }
-
-    /// @dev Chainlink's coordinator refuses to migrate a subscription while a request is still
-    /// pending, which is exactly the case a stuck request creates. The author can finish the move
-    /// instead. This points the consumer somewhere else and touches no coin and no money.
-    function _canSetCoordinator(address who) internal view override returns (bool) {
-        return who == owner();
     }
 
     /// @dev `author` is immutable and takes the founder coins. If ownership could move, the owner
