@@ -153,7 +153,7 @@ test("the Chainlink fee is shown and rides along as value on both mints", () => 
   expect(h).toContain('"vrfFeeWei":"300000000000000"');
   expect(h).toContain('"vrfFeeEth":"0.0003"');
   // Both sends go through withFee, so neither can forget the value.
-  expect((h.match(/params:\[withFee\(/g) ?? []).length).toBe(2);
+  expect((h.match(/sendTransaction\(withFee\(/g) ?? []).length).toBe(2);
   expect(h).toContain("tx.value='0x'+v.toString(16)");
   expect(eth(c.vrfFeeWei)).toBe("0.0003 ETH");
   expect(ethOf(0n)).toBe("0");

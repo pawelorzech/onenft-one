@@ -1,3 +1,4 @@
+import { mintPage } from "./mint-page.ts";
 /**
  * The server. Every page that shows a coin reads the chain through the cache
  * in contract.ts: the last good state at once, a wait only before the first
@@ -6,6 +7,9 @@
  * /api/state and /api/holder the same way.
  */
 import { MASTERS } from "./coin.ts";
+import { refreshCoin, refreshHoldings } from "./contract.ts";
+import { withDeadline } from "./swr.ts";
+import { seriesCoinId } from "./series.ts";
 import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, IMG_V, IMG_Q, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
 import { coinOfSeed, placeholderCoin } from "./preview.ts";
 import { coinOf } from "./token.ts";
@@ -96,8 +100,15 @@ async function route(url: URL): Promise<Response> {
   }
 
   // ---- from here on pages show chain state
-  const chain = await chainState();
-  const status = chainStatus();
+  let chain = await chainState();
+  let status = chainStatus();
+
+  const seriesLink = path.match(/^\/series\/(\d+)\/coin\/(\d+)$/);
+  if (seriesLink || path === "/series-coin") {
+    if (!chain) return html(chainDown(chain), 503);
+    const id = seriesCoinId(seriesLink?.[1] ?? url.searchParams.get("series") ?? "", seriesLink?.[2] ?? url.searchParams.get("number") ?? "", chain.seriesSize);
+    return id === null ? text("invalid series or coin number", 400) : redirect(`/coin/${id}`);
+  }
 
   if (path === "/") return html(homePage(chain, status, await namesFor(chain, chain ? recentOwners(chain) : undefined)));
   if (path === "/coins") return html(coinsPage(chain, Number(url.searchParams.get("page") ?? 1), status));
@@ -105,6 +116,12 @@ async function route(url: URL): Promise<Response> {
   if (path === "/how") return html(howPage(chain, status));
   if (path === "/assets") return html(assetsPage(chain, status));
   if (path === "/yours") return html(yoursPage(chain, status, url.searchParams.get("bad")));
+  if (path === "/api/mints") {
+    if (!chain || status.stale) return json({ error: "chain unavailable" }, 0, 503);
+    const snapshot = chain;
+    const page = mintPage(snapshot, [...snapshot.coins.keys()], url.searchParams, (id) => coinJson(snapshot.coins.get(id)!, snapshot, undefined, status));
+    return json(page, 0, "error" in page ? 400 : 200);
+  }
   if (path === "/api/state") return json(stateJson(chain, await namesFor(chain, chain ? recentOwners(chain) : undefined), status), 15);
 
   // The newest coin as the site's own image, or the sealed stand-in.
@@ -124,11 +141,16 @@ async function route(url: URL): Promise<Response> {
   const m = path.match(/^\/(api\/)?coin\/(\d{1,7})(\.svg|\.png|-1024\.png)?$/);
   if (m) {
     const id = Number(m[2]);
+    if (!m[3]) {
+      chain = await withDeadline(refreshCoin(id, afterBlock(url.searchParams)), 2500).catch(() => chain);
+      status = chainStatus();
+    }
     if (!contractEnabled()) return m[1] ? json({ error: "no contract configured" }, 0, 404) : html(notFound(chain, "No contract is configured on this server, so no coin exists."), 404);
     const c = chain?.coins.get(id);
+    if (c && afterBlock(url.searchParams) > (c.readBlock ?? 0n)) status = { ...status, stale: true, error: "The transaction is confirmed, but this RPC has not caught up yet. Refresh to check the updated coin." };
     if (!c) {
       // Unknown here. That is "no such coin" only when the chain answered and the id is past the last mint.
-      const unread = !chain || status.stale || (id >= 1 && id < chain.nextId);
+      const unread = !chain || status.stale;
       if (unread) return m[1] ? json({ error: "the chain did not answer for this coin", chain: status }, 0, 503) : html(chainDown(chain, `Coin ${pad5(id)} could not be read from the chain. Try again in a minute.`), 503);
       return m[1] ? json({ error: "no such coin", minted: chain!.minted }, 0, 404) : html(notFound(chain, `Coin ${pad5(id)} does not exist. ${chain!.nextId - 1} coins are minted.`), 404);
     }
@@ -164,6 +186,11 @@ async function route(url: URL): Promise<Response> {
       return html(failed ? chainDown(chain, "ENS did not answer. Try the name again in a minute, or use the address.") : notFound(chain, `No wallet answers to ${holder[2]}.`), failed ? 503 : 404);
     }
     const names = await ensNames([who]);
+    if (url.searchParams.get("refresh") === "1") {
+      chain = await withDeadline(refreshHoldings(afterBlock(url.searchParams)), 2500).catch(() => chain) ?? chain;
+      status = chainStatus();
+    }
+    if (afterBlock(url.searchParams) > (chain.ownersReadBlock ?? 0n)) status = { ...status, stale: true, error: "The transaction is confirmed, but these holdings have not caught up yet. Refresh to check them again." };
     if (holder[1]) return json(holderJson(who, chain, names, status), 15);
     return html(holderPage(chain, who as Address, holder[2], names, status));
   }
@@ -179,6 +206,13 @@ if (import.meta.main) {
       .catch((e) => console.error("contract state unavailable at boot, serving without it:", (e as Error).message));
     if (process.env.DEPLOYER_KEY) startKeeper(process.env.DEPLOYER_KEY as Hex);
   }
-  Bun.serve({ port: PORT, fetch: handle });
+  const server = Bun.serve({ port: PORT, fetch: handle });
+  if (process.send) process.send({ port: server.port });
   console.log(`one.onenft.click on :${PORT}${contractEnabled() ? "" : ", no contract configured"}`);
+}
+
+/** Receipt block hint; bounded input and reader cooldown prevent unbounded refreshes. */
+export function afterBlock(params: URLSearchParams): bigint {
+  const raw = params.get("afterBlock") ?? "";
+  return params.get("refresh") === "1" && /^[1-9]\d{0,15}$/.test(raw) ? BigInt(raw) : 0n;
 }

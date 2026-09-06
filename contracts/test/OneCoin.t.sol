@@ -747,6 +747,58 @@ contract OneCoinTest is Test {
         assertEq(token.viewOf(25000).number, 25000);
     }
 
+    /// @dev Characterizes an immutable limitation: matching request ids does not make the
+    /// shared urn independent of callback order. This is evidence, not a fairness guarantee.
+    function test_ReverseIndependentFulfilmentsChangeWhoReceivesTheMasterSlot() public {
+        uint256 first = _buy(buyer, 1, 1, holder);
+        uint256 a = _lastRequest();
+        uint256 second = _buy(buyer, 1, 1, stranger);
+        uint256 b = _lastRequest();
+        uint256[] memory words = new uint256[](1);
+        words[0] = 7; // Art seed seven, urn index zero.
+        uint256 checkpoint = vm.snapshotState();
+
+        vrf.fulfill(a, words);
+        vrf.fulfill(b, words);
+        assertEq(token.slotOf(first), 0);
+        assertEq(token.slotOf(second), 24999);
+        assertEq(token.urnLeft(1), 24998);
+
+        assertTrue(vm.revertToState(checkpoint));
+        vrf.fulfill(b, words);
+        vrf.fulfill(a, words);
+        assertEq(token.slotOf(first), 24999, "callback order changes the first coin's slot");
+        assertEq(token.slotOf(second), 0, "the later mint receives the master when answered first");
+        assertEq(token.urnLeft(1), 24998, "uniqueness and total draws still hold");
+        assertEq(token.mastersLeft(1), 49);
+        assertEq(token.ownerOf(first), holder);
+        assertEq(token.ownerOf(second), stranger);
+    }
+
+    function test_ReverseIndependentFulfilmentsAcrossABoundaryKeepBothUrnsConsistent() public {
+        _jumpTo(25000);
+        uint256 first = _buy(buyer, 1, 2, holder); // Last of series one, first of series two.
+        uint256 a = _lastRequest();
+        uint256 second = _buy(buyer, 1, 2, stranger);
+        uint256 b = _lastRequest();
+        uint256[] memory words = new uint256[](2);
+        vrf.fulfill(b, words);
+        vrf.fulfill(a, words);
+        assertEq(token.slotOf(first), 0, "series one has its own untouched urn");
+        assertEq(token.slotOf(first + 1), 24998);
+        assertEq(token.slotOf(second), 0);
+        assertEq(token.slotOf(second + 1), 24999);
+        assertEq(token.urnLeft(1), 24999);
+        assertEq(token.urnLeft(2), 24997);
+        assertEq(token.viewOf(first).number, 25000);
+        assertEq(token.viewOf(first + 1).number, 1);
+        assertEq(token.viewOf(first + 1).series, 2);
+        vrf.fulfill(a, words);
+        vrf.fulfill(b, words);
+        assertEq(token.urnLeft(1), 24999, "duplicate answers do not consume slots");
+        assertEq(token.urnLeft(2), 24997);
+    }
+
     function test_RetryCannotThrowAwayAnAnswerThatIsAlreadyOnItsWay() public {
         // The grinding move: mint, wait out the retry window, watch the coordinator's answer
         // in the mempool, dislike the slot, and retry to draw again. It must not work.

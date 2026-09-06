@@ -2,8 +2,8 @@
  * The site's hand-written ABI against the compiled contract. Every function
  * and event the site calls must exist with the same argument and return types,
  * or a page reads garbage from a live chain and nobody finds out until then.
- * The test skips when the artifact is missing, so it needs no Foundry run to
- * pass; `cd contracts && forge build` puts it there.
+ * Missing artifacts fail this test. Run `bash scripts/gate.sh` to build the
+ * contract before the site tests, including on a clean checkout.
  */
 import { test, expect } from "bun:test";
 import { ABI, SELECTORS, MINTED_TOPIC, REVERTS } from "./contract.ts";
@@ -18,7 +18,7 @@ const tuple = (a: AbiFunction) => (((a.outputs[0] ?? {}) as { components?: { nam
 
 test("the site's ABI matches the compiled OneCoin", async () => {
   const file = Bun.file(ARTIFACT);
-  if (!(await file.exists())) return;
+  if (!(await file.exists())) throw new Error("Missing OneCoin artifact; run bash scripts/gate.sh (or cd contracts && forge build) before bun test");
   const built = ((await file.json()) as { abi: Abi }).abi as (AbiFunction | AbiEvent)[];
   const byName = new Map(built.map((a) => [`${a.type}:${sig(a)}`, a]));
   let checked = 0;
@@ -42,7 +42,7 @@ test("the site's ABI matches the compiled OneCoin", async () => {
 
 test("every revert the page explains is a revert the contract can throw", async () => {
   const file = Bun.file(ARTIFACT);
-  if (!(await file.exists())) return;
+  if (!(await file.exists())) throw new Error("Missing OneCoin artifact; run bash scripts/gate.sh (or cd contracts && forge build) before bun test");
   const built = ((await file.json()) as { abi: Abi }).abi;
   const selectors = new Set(built.filter((a) => a.type === "error").map((a) => toFunctionSelector(sig(a as unknown as AbiFunction)) as string));
   for (const [selector, said] of REVERTS) {

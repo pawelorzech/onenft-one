@@ -1,5 +1,6 @@
 /** Inner pages: your wallet, one holder, assets. The same shape as the sisters. */
 import type { Address } from "viem";
+import { dataNote } from "./site.ts";
 import {
   SITE, REPO, PARENT, NAME, layout, topBar, footer, staleNote, noContractNote, pageColors, esc, num, plural, shortAddr,
   usdc, bpsPct, pad5, traitList, moneyBlock, coinTags, coinActions, actionScript, isAuthor, factTile, type Names, NO_NAMES,
@@ -51,6 +52,7 @@ ${downloadBar(c.id, coin.palette.bg)}
   const body = `<main class="wide" id="main">
 ${topBar(rawName)}
 ${staleNote(status)}
+${dataNote(chain)}
 <div><h2 class="syne">${nameHeading(rawName)}</h2><p class="lead" style="margin-top:8px">${mine.length ? `${mine.length} ${plural(mine.length, "coin", "coins")}${isAuthor(chain, who) ? ", the author's wallet" : ""}.` : "No coins yet."}${handle.toLowerCase() !== who.toLowerCase() ? ` <span class="small">${shortAddr(who)}</span>` : ""}</p></div>
 ${factList}
 ${whoBlock(true)}

@@ -48,8 +48,7 @@ export function attributes(coin: Coin, input: MetaInput): { trait_type: string; 
 }
 
 /** The JSON of a token, minified, keys in this order. */
-export function metadataOf(input: MetaInput): { json: string; coin: Coin } {
-  const coin = renderCoin(input);
+export function metadataOf(input: MetaInput, coin: Coin = renderCoin(input)): { json: string; coin: Coin } {
   const name = coin.masterName ? `ONE #${pad5(input.number)} ${coin.masterName}` : `ONE #${pad5(input.number)}`;
   const desc = `Coin ${pad5(input.number)} of series ${roman(input.series)}. Backing ${input.backing} USDC, funded ${units(input.fundedUnits)} USDC, lifetime yield ${units(input.lifetimeUnits)} USDC. ${input.sealed ? "Sealed: the seed from Chainlink VRF has not arrived yet." : `Drawn on chain from seed ${fingerprint(input.seed)}.`} Burn to redeem. ${SITE_URL}/coin/${input.number}`;
   const attrs = attributes(coin, input).map((a) => `{"trait_type":${q(a.trait_type)},${a.display_type ? `"display_type":${q(a.display_type)},` : ""}"value":${typeof a.value === "number" ? a.value : q(a.value)}}`);

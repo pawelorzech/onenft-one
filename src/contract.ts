@@ -16,9 +16,9 @@
  * its owner move, so a coin outside the window carries the numbers of its last
  * read until the next full pass.
  */
-import { createPublicClient, http, parseAbi, toFunctionSelector, toEventSelector, type Address } from "viem";
+import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseAbi, toFunctionSelector, toEventSelector, type Address } from "viem";
 import { base, baseSepolia } from "viem/chains";
-import { Swr } from "./swr.ts";
+import { Swr, type SwrStatus } from "./swr.ts";
 
 export const CONTRACT = (process.env.CONTRACT_ADDRESS ?? "") as Address | "";
 export const CHAIN_ID = Number(process.env.CHAIN_ID ?? (CONTRACT ? 84532 : 0));
@@ -39,7 +39,7 @@ export const DEFAULT_FOUNDER_WINDOW = 1000;
 /** The author's cut of the yield, per cent. Read from `FEE_BPS` at boot; this is the fallback. */
 export const DEFAULT_FEE_PCT = 10;
 /** Coins one mint transaction may buy before the chain state says otherwise. */
-export const DEFAULT_MAX_BATCH = 10;
+export const DEFAULT_MAX_BATCH = 40;
 /** How long a coin must wait after its mint before it can be burned, in seconds. Read from the contract; this is the fallback for a page with no chain. */
 export const DEFAULT_REDEEM_LOCK = 30 * 86400;
 /** How long a coin the VRF never answered for waits before its backing comes free. */
@@ -98,6 +98,7 @@ export const ABI = parseAbi([
   "error SealedCoin(uint256 id)",
   "error FeeTooLow(uint256 needed, uint256 sent)",
   "error NothingToClaim(uint256 id)",
+  "error ERC721NonexistentToken(uint256 tokenId)",
 ]);
 
 /** The ERC-20 calls the browser makes against USDC before a mint. */
@@ -158,6 +159,9 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 /** One coin as the chain holds it: the art, the money and the holder. */
 export type CoinRecord = {
   id: number;
+  /** Age of this coin's money and owner, independent of the collection counters. */
+  readAt?: number;
+  readBlock?: bigint;
   /** Zero while sealed. */
   seed: bigint;
   /** The art slot, 0 to 9999; below 50 it is a Master Coin. Null while sealed. */
@@ -240,7 +244,7 @@ export type ChainState = {
   maxBatch: number;
   /** Seconds a coin must wait after its mint before it can be burned. */
   redeemLock: number;
-  /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per transaction, whatever the count. */
+  /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per coin; multiply by the batch count. */
   vrfFeeWei: bigint;
   /** Coins into a series after which the founder window shuts for good. */
   founderWindow: number;
@@ -260,6 +264,10 @@ export type ChainState = {
   coins: Map<number, CoinRecord>;
   /** Unix milliseconds of the read this state came from. */
   readAt: number;
+  /** Last complete ownership scan; older tokens can predate readAt. */
+  ownersReadAt?: number;
+  ownersReadBlock?: bigint;
+  blockNumber?: bigint;
 };
 
 export type ChainStatus = {
@@ -334,26 +342,39 @@ export function backingList(backings: number[]): string {
 export const seriesOfIn = (id: number, seriesSize: number) => Math.floor((id - 1) / seriesSize) + 1;
 export const numberOfIn = (id: number, seriesSize: number) => ((id - 1) % seriesSize) + 1;
 
-const coins = new Map<number, CoinRecord>();
-let allReadAt = 0;
-
-type Info = {
+export type Info = {
   seed: bigint; slot: number; backingClass: number; founder: boolean; sealed_: boolean; renderer: Address;
   series: bigint; number: bigint; shares: bigint; principal: bigint; claimed: bigint; requestId: bigint;
   mintedAt: bigint; redeemableAt: bigint; nav: bigint; profit: bigint; lifetime: bigint; yieldBps: number;
 };
 
+type ReaderClient = Pick<NonNullable<typeof client>, "getBlockNumber" | "multicall">;
+
+/** Isolated state makes failed chunks atomic and lets RPC tests exercise the real loader. */
+export function createChainReader(client: ReaderClient, address: Address, now = Date.now) {
+let coins = new Map<number, CoinRecord>();
+let allReadAt = 0;
+let allReadBlock = 0n;
+let lastSeen = 0;
+let fullRequested = false;
+const requested = new Set<number>();
+
+function nonexistent(error: unknown, id: number): boolean {
+  const cause = error instanceof BaseError ? error.walk((e) => e instanceof ContractFunctionRevertedError) : null;
+  return cause instanceof ContractFunctionRevertedError && cause.data?.errorName === "ERC721NonexistentToken" && (cause.data.args as readonly bigint[] | undefined)?.[0] === BigInt(id);
+}
+
 /** One multicall in chunks. A reverted call is a null (the coin was redeemed, or never existed); any other failure throws, so a read is all or nothing. */
-async function multicallBatch<T>(ids: number[], fn: "coinOf" | "ownerOf"): Promise<(T | null)[]> {
-  if (!client || !ids.length) return [];
-  const c = { address: CONTRACT as Address, abi: ABI } as const;
+async function multicallBatch<T>(ids: number[], fn: "coinOf" | "ownerOf", blockNumber: bigint): Promise<(T | null)[]> {
+  if (!ids.length) return [];
+  const c = { address, abi: ABI } as const;
   const out: (T | null)[] = [];
   for (let i = 0; i < ids.length; i += CHUNK) {
     const part = ids.slice(i, i + CHUNK);
-    const res = await client.multicall({ contracts: part.map((id) => ({ ...c, functionName: fn, args: [BigInt(id)] as const })), allowFailure: true });
+    const res = await client.multicall({ contracts: part.map((id) => ({ ...c, functionName: fn, args: [BigInt(id)] as const })), allowFailure: true, blockNumber });
     res.forEach((r, j) => {
       if (r.status === "success") out.push(r.result as T);
-      else if (/revert/i.test(r.error?.message ?? "")) out.push(null);
+      else if (nonexistent(r.error, part[j])) out.push(null);
       else throw new Error(`${fn}(${part[j]}) failed: ${scrubError(r.error)}`);
     });
   }
@@ -364,6 +385,7 @@ function recordOf(id: number, info: Info, owner: Address | null, backings: numbe
   const slot = info.sealed_ ? null : info.slot;
   return {
     id,
+    readAt: now(),
     seed: info.sealed_ ? 0n : info.seed,
     slot,
     backingClass: info.backingClass,
@@ -394,14 +416,16 @@ function idsToRead(last: number, all: boolean): number[] {
   if (last < 1) return [];
   if (all) return Array.from({ length: last }, (_, i) => i + 1);
   const want = new Set<number>();
+  for (let id = lastSeen + 1; id <= last; id++) want.add(id);
   for (let id = Math.max(1, last - RECENT + 1); id <= last; id++) want.add(id);
   for (const c of coins.values()) if (c.sealed) want.add(c.id);
+  for (const id of requested) if (id >= 1 && id <= last) want.add(id);
   return [...want].sort((a, b) => a - b);
 }
 
 async function readChainState(): Promise<ChainState> {
-  if (!client || !CONTRACT) throw new Error("no contract configured");
-  const c = { address: CONTRACT, abi: ABI } as const;
+  const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
+  const c = { address, abi: ABI } as const;
   const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, seriesSize, masters, foundersPerSeries, redeemLock, vrfFeeWei, founderWindowSize, feeBps, sealedEscape, b0, b1, b2, b3] = await client.multicall({
     contracts: [
       { ...c, functionName: "author" }, { ...c, functionName: "renderer" }, { ...c, functionName: "rendererLocked" },
@@ -410,6 +434,7 @@ async function readChainState(): Promise<ChainState> {
       { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] }, { ...c, functionName: "backingOf", args: [3] },
     ],
     allowFailure: false,
+    blockNumber,
   });
   const size = Number(seriesSize);
   const last = Number(nextIdRaw) - 1;
@@ -422,27 +447,34 @@ async function readChainState(): Promise<ChainState> {
       { ...c, functionName: "founderWindow", args: [BigInt(series)] },
     ],
     allowFailure: false,
+    blockNumber,
   });
   const backings = [b0, b1, b2, b3].map((u) => Number(u / 10n ** BigInt(USDC_DECIMALS)));
 
-  const all = Date.now() - allReadAt > ALL_TTL_MS;
+  const all = !allReadAt || last < lastSeen || now() - allReadAt >= ALL_TTL_MS || fullRequested;
   const ids = idsToRead(last, all);
-  const infos = await multicallBatch<Info>(ids, "coinOf");
-  const owners = await multicallBatch<Address>(ids, "ownerOf");
+  const infos = await multicallBatch<Info>(ids, "coinOf", blockNumber);
+  const owners = await multicallBatch<Address>(ids, "ownerOf", blockNumber);
 
   // Every chunk answered, so the read may be written.
+  const next = all ? new Map<number, CoinRecord>() : new Map(coins);
   ids.forEach((id, i) => {
     const info = infos[i];
-    if (!info) { coins.delete(id); return; }
-    coins.set(id, recordOf(id, info, owners[i] ?? null, backings, Number(sealedEscape), Number(masters)));
+    if (!info && !owners[i]) { next.delete(id); return; }
+    if (!info || !owners[i]) throw new Error(`inconsistent coin/owner at block ${blockNumber}: ${id}`);
+    next.set(id, { ...recordOf(id, info, owners[i], backings, Number(sealedEscape), Number(masters)), readBlock: blockNumber });
   });
-  if (all) allReadAt = Date.now();
+  coins = next;
+  lastSeen = last;
+  if (all) { allReadAt = now(); allReadBlock = blockNumber; }
+  fullRequested = false;
+  for (const id of ids) requested.delete(id);
 
   let pending = 0;
   for (const coin of coins.values()) if (coin.sealed && coin.series === series) pending++;
 
   return {
-    address: CONTRACT,
+    address,
     chainId: CHAIN_ID,
     author,
     renderer,
@@ -473,12 +505,19 @@ async function readChainState(): Promise<ChainState> {
     founder: { minted: Number(window[0]), left: Number(window[1]), closesAt: Number(window[2]), open: window[3] },
     backings,
     coins,
-    readAt: Date.now(),
+    readAt: now(),
+    ownersReadAt: allReadAt,
+    ownersReadBlock: allReadBlock,
+    blockNumber,
   };
 }
+return { read: readChainState, request: (id: number) => requested.add(id), pending: (id: number) => requested.has(id), requestAll: () => { fullRequested = true; } };
+}
+
+const reader = client && CONTRACT ? createChainReader(client, CONTRACT) : null;
 
 const store = new Swr<ChainState>({
-  load: readChainState,
+  load: () => reader ? reader.read() : Promise.reject(new Error("no contract configured")),
   ttlMs: TTL_MS,
   staleAfterMs: STALE_AFTER_MS,
   deadlineMs: DEADLINE_MS,
@@ -493,6 +532,55 @@ export async function chainState(): Promise<ChainState | null> {
 }
 export function readNow(): Promise<ChainState> {
   return store.refresh();
+}
+
+/** A visited old coin is refreshed too; callers still have a bounded wait and last-good fallback. */
+let forcedCoinAt = 0;
+export async function refreshCoin(id: number, afterBlock = 0n): Promise<ChainState | null> {
+  const hit = store.peek();
+  if (!reader || !hit || id < 1 || id >= hit.nextId) return hit;
+  if (!refreshAllowed(store.status())) return hit;
+  const coin = hit.coins.get(id);
+  const force = afterBlock > (coin?.readBlock ?? 0n) && Date.now() - forcedCoinAt >= TTL_MS;
+  if (coin && Date.now() - (coin.readAt ?? hit.readAt) < TTL_MS && !force) return hit;
+  if (force) forcedCoinAt = Date.now();
+  reader.request(id);
+  try {
+    await store.refresh();
+    if (reader.pending(id)) await store.refresh();
+  } catch {}
+  return store.peek();
+}
+
+/** Explicit refreshes respect the same failure backoff as background reads. */
+export function refreshAllowed(status: Pick<SwrStatus, "error" | "errorAt" | "failures">, now = Date.now()): boolean {
+  return !status.error || status.errorAt === null || now - status.errorAt >= Math.min(60_000, 3_000 * 2 ** (status.failures - 1));
+}
+
+let holdingsRun: Promise<ChainState | null> | null = null;
+let forcedHoldingsAt = 0;
+export async function refreshHoldings(afterBlock = 0n): Promise<ChainState | null> {
+  if (!reader) return null;
+  if (holdingsRun) return holdingsRun;
+  if (!refreshAllowed(store.status())) return store.peek();
+  const hit = store.peek();
+  const force = afterBlock > (hit?.ownersReadBlock ?? 0n) && Date.now() - forcedHoldingsAt >= TTL_MS;
+  if (hit && Date.now() - (hit.ownersReadAt ?? 0) < TTL_MS && !force) return hit;
+  if (force) forcedHoldingsAt = Date.now();
+  holdingsRun = (async () => {
+    try {
+      if (store.status().inflight) await store.refresh();
+      reader.requestAll();
+      await store.refresh();
+    } catch {}
+    return store.peek();
+  })().finally(() => { holdingsRun = null; });
+  return holdingsRun;
+}
+
+export function dataFreshness(chain: ChainState, coin?: CoinRecord) {
+  const readAt = coin ? coin.readAt ?? chain.readAt : chain.ownersReadAt ?? chain.readAt;
+  return { readAt: new Date(readAt).toISOString(), ageSeconds: Math.max(0, Math.floor((Date.now() - readAt) / 1000)), stale: Date.now() - readAt > STALE_AFTER_MS };
 }
 export function chainStatus(): ChainStatus {
   const s = store.status();

@@ -1,3 +1,4 @@
+import { walletErrorScript } from "./wallet-errors.ts";
 /**
  * Page HTML. The page has no palette of its own: it wears the ground and ink
  * of the newest coin. No light or dark mode.
@@ -13,7 +14,7 @@ import {
 } from "./coin.ts";
 import {
   RISK, RISK_SHORT, DEFAULT_MAX_BATCH, SELECTORS, MINTED_TOPIC, IMG_Q, IMG_V, factsOf, backingList,
-  REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound,
+  REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound, dataFreshness,
   type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { coinOf } from "./token.ts";
@@ -140,7 +141,7 @@ aside{border-right:1px solid var(--line);padding:38px 32px}
 aside .stick{position:sticky;top:38px;display:flex;flex-direction:column;gap:28px}
 .mark{font-weight:800;font-size:20px;letter-spacing:-.01em;text-decoration:none}
 h1{font-weight:800;font-size:33px;line-height:.96;letter-spacing:-.045em;margin:0}
-h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0}
+h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0;overflow-wrap:anywhere}
 h3{font-weight:700;font-size:18px;margin:0}
 .lead{color:var(--muted);margin:0}
 .facts{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);max-width:1120px}
@@ -264,7 +265,7 @@ pre.snip{margin:0;padding:14px;background:var(--soft);overflow-x:auto;font-size:
 .tok .num{font-size:44px}
 @media (max-width:1180px){.hero{display:block}.hero .coinimg{margin-bottom:20px}}
 @media (max-width:900px){
- .page{grid-template-columns:1fr}
+ .page{grid-template-columns:minmax(0,1fr)}
  aside{border-right:0;border-bottom:1px solid var(--line);padding:18px 20px}
  aside .stick{position:static;gap:16px}
  h1{font-size:38px}
@@ -529,7 +530,7 @@ function mintBox(chain: ChainState): string {
 <div class="count"><label for="count">How many coins<input class="field" id="count" type="number" inputmode="numeric" min="1" max="${chain.maxBatch}" step="1" value="1"></label><span class="small">Up to ${chain.maxBatch} in one transaction.</span></div>
 <p class="total"><span class="small">Total</span><b class="syne" id="total">${chain.backings[0]}.00 USDC</b></p>
 ${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the randomness, paid to Chainlink, one fee per coin. Plus network gas.</p>` : ""}
-<div class="actions">${soldOut ? `<button class="cta syne" disabled>Series ${roman(chain.series)} is full</button>` : `<button class="cta syne" id="mint-btn">Connect wallet</button>`}<button class="btn" id="mint-check" type="button" hidden>Check status</button></div>
+<div class="actions">${soldOut ? `<button class="cta syne" disabled>Series ${roman(chain.series)} is full</button>` : `<button class="cta syne" id="mint-btn">Connect wallet</button>`}<button class="btn" id="mint-check" type="button" hidden>Check status</button><button class="btn" id="mint-network" type="button" hidden>Continue on ${chainName(chain.chainId)}</button></div>
 <p class="msg" id="msg" aria-live="polite"></p>
 <p class="note" role="note">This can lose you money. <a href="/how#risk">Read what can go wrong</a> before you mint.</p>
 <div id="sealed" hidden><p class="small">Your coins are minted and sealed. The seed arrives from Chainlink VRF a few blocks later, and this page opens them.</p><div class="strip" id="sealed-list"></div></div>
@@ -569,7 +570,7 @@ export function mintScript(chain: ChainState | null): string {
   return `<script>
 (function(){
 var CFG=${cfg};if(!CFG.address)return;
-var btn=document.getElementById('mint-btn');var out=document.getElementById('msg');var check=document.getElementById('mint-check');
+var btn=document.getElementById('mint-btn');var out=document.getElementById('msg');var check=document.getElementById('mint-check');var networkBtn=document.getElementById('mint-network');
 var count=document.getElementById('count');var total=document.getElementById('total');var classes=document.querySelectorAll('.classes button');
 var sealedBox=document.getElementById('sealed');var sealedList=document.getElementById('sealed-list');
 var fbox=document.getElementById('founder-box');var fbtn=document.getElementById('founder-btn');var fcount=document.getElementById('fcount');
@@ -583,7 +584,9 @@ function addr(a){return a.slice(2).toLowerCase().padStart(64,'0')}
 /** A wallet hands back the contract's four bytes; this turns the known ones into a sentence. */
 function reverted(e){var blob='';try{blob=JSON.stringify(e)}catch(x){}blob=(blob+' '+((e&&e.message)||'')).toLowerCase();
   for(var i=0;i<CFG.reverts.length;i++)if(blob.indexOf(CFG.reverts[i][0].toLowerCase())>=0)return CFG.reverts[i][1];return null}
-function failed(e){return e&&e.code===4001?'Cancelled in the wallet. Nothing was sent.':e&&e.code===-32002?'The wallet is already asking. Open it to answer.':(reverted(e)||('Failed: '+((e&&e.message)||e)))}
+${walletErrorScript}
+var sendPhase='before',sentHash=null;
+function failed(e){return walletErrorMessage(e,{phase:sendPhase,hash:sentHash,network:CFG.name,contractMessage:reverted(e)})}
 function money(u){var w=u/1000000n;var c=(u%1000000n)/10000n;return w.toString()+'.'+c.toString().padStart(2,'0')+' USDC'}
 function n(){var v=parseInt(count&&count.value||'1',10);if(!(v>=1))v=1;if(v>CFG.maxBatch)v=CFG.maxBatch;return v}
 function totalUnits(){return units*BigInt(n())}
@@ -601,7 +604,29 @@ function key(a){return 'onenft_mint:'+CFG.chainHex+':'+CFG.address.toLowerCase()
 function keep(a,r){try{localStorage.setItem(key(a),JSON.stringify(r))}catch(e){}}
 function rec(a){try{return JSON.parse(localStorage.getItem(key(a))||'null')}catch(e){return null}}
 function drop(a){try{localStorage.removeItem(key(a))}catch(e){}}
-function offerCheck(f){if(!check)return;check.hidden=false;check.onclick=function(){check.hidden=true;f()}}
+function offerCheck(f){if(!check)return;check.hidden=false;check.onclick=function(){check.hidden=true;Promise.resolve().then(f).catch(function(e){say(failed(e));lock(false)})}}
+async function checkWallet(){
+  var network=await eth.request({method:'eth_chainId'});
+  if(parseInt(network,16)!==parseInt(CFG.chainHex,16)){if(networkBtn)networkBtn.hidden=false;throw new Error('Switch back to '+CFG.name+' to continue. Your pending transaction is kept.')}
+  if(networkBtn)networkBtn.hidden=true;
+  var accs=await eth.request({method:'eth_accounts'});
+  if(!accs||!accs[0]||accs[0].toLowerCase()!==account.toLowerCase())throw new Error('The wallet account changed. Switch back to the original account to continue.');
+}
+async function sendTransaction(tx){
+  sendPhase='before';sentHash=null;await checkWallet();sendPhase='sending';
+  var previous=rec(account);keep(account,{stage:'uncertain'});
+  try{var hash=await eth.request({method:'eth_sendTransaction',params:[tx]});sendPhase='sent';sentHash=hash;return hash}
+  catch(e){
+    var definite=e&&e.code===4001||reverted(e)||/insufficient funds|insufficient.*eth|funds for gas|allowance/i.test((e&&e.message)||'');
+    if(definite){sendPhase='before';if(previous)keep(account,previous);else drop(account)}
+    else{keep(account,{stage:'uncertain'});offerCheck(checkUncertain)}
+    throw e;
+  }
+}
+function checkUncertain(){
+  if(!confirm('Check your wallet activity on '+CFG.name+' first. If a transaction exists, wait for its result. Clear this warning only if your wallet confirms that no transaction was sent. Have you confirmed that nothing was sent?')){offerCheck(checkUncertain);return}
+  drop(account);sendPhase='before';sentHash=null;lock(false);say('The warning is cleared. You can try minting again.');
+}
 async function receipt(hash){try{return await eth.request({method:'eth_getTransactionReceipt',params:[hash]})}catch(e){return null}}
 async function call(to,data){var v=await eth.request({method:'eth_call',params:[{to:to,data:data},'latest']});return (!v||v==='0x')?0n:BigInt(v)}
 async function wait(hash,what){
@@ -635,7 +660,7 @@ async function watch(ids){
     if(open.length===ids.length){say(ids.length===1?'Coin #'+ids[0]+' is open.':'All '+ids.length+' coins are open.');drop(account);lock(false);if(ids.length===1){await sleep(1200);location.href='/coin/'+ids[0]}return}
     await sleep(10000);
   }
-  say('The seed is taking long. Your coins are safe and they open on their own; anyone can also ask Chainlink again from the contract.');lock(false);offerCheck(function(){watch(ids)});
+  say('Your mint is confirmed, but Chainlink has not returned the seed yet. Do not mint again to reveal these coins. Check again later or open your wallet page; the coins remain sealed until a response arrives.');lock(false);offerCheck(function(){watch(ids)});
 }
 async function switchChain(){
   try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
@@ -648,7 +673,7 @@ function feeText(cnt){var v=BigInt(CFG.vrfFeeWei)*BigInt(cnt||1);return v>0n?' p
 async function mintNow(need,cnt,klass){
   say('Confirm the mint in your wallet: '+money(need)+feeText(cnt)+' for '+cnt+(cnt===1?' coin.':' coins.'));
   var data=CFG.sel.mint+word(BigInt(klass))+word(BigInt(cnt))+addr(account);
-  var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data},cnt)]});
+  var hash=await sendTransaction(withFee({from:account,to:CFG.address,data:data},cnt));
   keep(account,{stage:'mint',hash:hash});
   show('Mint sent. Waiting for confirmation.',hash);
   return settleLater(hash);
@@ -669,32 +694,35 @@ async function afterApprove(r){
   return mintNow(BigInt(r.need),r.count,r.klass);
 }
 /** Picks up whatever this wallet left behind: a sealed batch, a mint in flight, an approval in flight. */
-function resume(r){
+async function resume(r){
+  sendPhase='before';sentHash=null;await checkWallet();
+  if(r.stage==='uncertain'){say(walletErrorMessage(null,{phase:'sending',network:CFG.name}));offerCheck(checkUncertain);lock(false);return}
   if(r.stage==='sealed'&&r.ids&&r.ids.length)return watch(r.ids);
   if(r.stage==='approve'&&r.hash)return afterApprove(r);
   if(r.hash){show('A transaction from this wallet is still on its way.',r.hash);return settleLater(r.hash)}
   drop(account);lock(false);
 }
 async function run(){
+  if(locked)return;sendPhase='before';sentHash=null;
   lock(true);
   var cnt=n(),klass=cls,need=totalUnits();
   try{
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
     account=accs[0];
     var old=rec(account);
-    if(old)return resume(old);
+    if(old)return await resume(old);
     await switchChain();
     say('Reading your USDC balance.');
     var bal=await call(CFG.usdc,CFG.sel.balanceOf+addr(account));
-    if(bal<need){say('This wallet holds '+money(bal)+'. The mint needs '+money(need)+'.');lock(false);return}
+    if(bal<need){say('This wallet holds '+money(bal)+' on '+CFG.name+'. The mint needs '+money(need)+'. No mint was sent. Add USDC on '+CFG.name+' or choose fewer coins.');lock(false);return}
     var allow=await call(CFG.usdc,CFG.sel.allowance+addr(account)+addr(CFG.address));
     if(allow<need){
       say('Approve '+money(need)+' of USDC for the contract. This is the first of two transactions.');
-      var ah=await eth.request({method:'eth_sendTransaction',params:[{from:account,to:CFG.usdc,data:CFG.sel.approve+addr(CFG.address)+word(need)}]});
+      var ah=await sendTransaction({from:account,to:CFG.usdc,data:CFG.sel.approve+addr(CFG.address)+word(need)});
       var r={stage:'approve',hash:ah,klass:klass,count:cnt,need:need.toString()};
       keep(account,r);
       show('Approval sent. Waiting for confirmation.',ah);
-      return afterApprove(r);
+      return await afterApprove(r);
     }
     await mintNow(need,cnt,klass);
   }catch(e){
@@ -703,15 +731,17 @@ async function run(){
   }
 }
 async function founderRun(){
+  if(locked)return;sendPhase='before';sentHash=null;
   lock(true);
   try{
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
     account=accs[0];
+    var pending=rec(account);if(pending)return await resume(pending);
     await switchChain();
     var cnt=parseInt(fcount&&fcount.value||'1',10);if(!(cnt>=1))cnt=1;if(cnt>CFG.maxBatch)cnt=CFG.maxBatch;
     say('Confirm the founder mint in your wallet: '+cnt+(cnt===1?' coin':' coins')+feeText(cnt)+'.');
     var data=CFG.sel.mintFounder+word(BigInt(cnt))+addr(account);
-    var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data},cnt)]});
+    var hash=await sendTransaction(withFee({from:account,to:CFG.address,data:data},cnt));
     keep(account,{stage:'mint',hash:hash});
     show('Founder mint sent. Waiting for confirmation.',hash);
     await settleLater(hash);
@@ -723,10 +753,24 @@ function seen(accs){
   if(fbox)fbox.hidden=!(a&&CFG.author&&a.toLowerCase()===CFG.author.toLowerCase());
   if(!a||locked)return;
   account=a;var r=rec(a);
-  if(r){lock(true);resume(r)}
+  if(r){lock(true);resume(r).catch(function(e){say(failed(e));lock(false)})}
 }
 eth.request({method:'eth_accounts'}).then(seen).catch(function(){});
 if(eth.on){eth.on('accountsChanged',seen);eth.on('chainChanged',function(id){if(parseInt(id,16)!==parseInt(CFG.chainHex,16))say('The wallet switched network. Switch back to '+CFG.name+' to mint.')})}
+async function continueNetwork(){
+  if(locked)return;
+  lock(true);
+  if(networkBtn)networkBtn.disabled=true;
+  try{
+    await switchChain();
+    await checkWallet();
+    var pending=rec(account);
+    if(pending)await resume(pending);
+    else{say('Connected to '+CFG.name+'. You can mint now.');lock(false)}
+  }catch(e){say(failed(e));lock(false)}
+  finally{if(networkBtn)networkBtn.disabled=false}
+}
+if(networkBtn)networkBtn.addEventListener('click',continueNetwork);
 if(btn)btn.addEventListener('click',run);
 if(fbtn)fbtn.addEventListener('click',founderRun);
 })();
@@ -748,11 +792,16 @@ export function actionScript(chain: ChainState | null): string {
 (function(){
 var CFG=${cfg};if(!CFG.address)return;
 var eth=window.ethereum;var acts=document.querySelectorAll('[data-act]');if(!acts.length)return;
+${walletErrorScript}
 var out=document.getElementById('msg');
 function say(t){if(out)out.textContent=t}
 function show(t,h){if(!out)return;out.textContent=t;if(h)out.insertAdjacentHTML('beforeend',' <a href="'+CFG.explorer+'/tx/'+h+'" target="_blank" rel="noopener">View transaction</a>')}
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
 function word(v){return v.toString(16).padStart(64,'0')}
+function pendingKey(act,id,from){return 'onenft_action:'+CFG.chainHex+':'+CFG.address.toLowerCase()+':'+act+':'+id+':'+from.toLowerCase()}
+function pendingGet(k){try{return JSON.parse(localStorage.getItem(k)||'null')}catch(e){return null}}
+function pendingPut(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+function pendingDrop(k){try{localStorage.removeItem(k)}catch(e){}}
 if(!eth||!eth.request)return;
 function mine(accs){var m={};(accs||[]).forEach(function(a){m[a.toLowerCase()]=1});acts.forEach(function(b){b.hidden=!m[(b.getAttribute('data-owner')||'').toLowerCase()]})}
 eth.request({method:'eth_accounts'}).then(mine).catch(function(){});
@@ -762,19 +811,36 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
   var act=b.getAttribute('data-act');var id=b.getAttribute('data-id');
   if(act==='redeem'&&!confirm(b.getAttribute('data-confirm')))return;
   var was=b.textContent;b.setAttribute('aria-busy','true');b.textContent='\\u2026';
+  var phase='before',hash=null,pkey=null;
   try{
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
     var from=accs[0];
     if(from.toLowerCase()!==(b.getAttribute('data-owner')||'').toLowerCase())throw new Error('this coin belongs to another wallet');
+    pkey=pendingKey(act,id,from);var old=pendingGet(pkey);
+    if(old&&!old.hash){
+      say(walletErrorMessage(null,{phase:'sending',network:CFG.name}));
+      if(confirm('Check your wallet activity first. Clear the pending warning only if your wallet confirms that no transaction was sent. Have you confirmed that nothing was sent?')){pendingDrop(pkey);say('The warning is cleared. Choose the action again when you are ready.')}
+      return;
+    }
     try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
     catch(e){if(e&&e.code===4902){await eth.request({method:'wallet_addEthereumChain',params:[{chainId:CFG.chainHex,chainName:CFG.name,rpcUrls:[CFG.rpc],nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18},blockExplorerUrls:[CFG.explorer]}]})}else{throw e}}
-    say('Confirm in your wallet.');
-    var data=(act==='claim'?CFG.sel.claim:CFG.sel.redeem)+word(BigInt(id));
-    var hash=await eth.request({method:'eth_sendTransaction',params:[{from:from,to:CFG.address,data:data}]});
+    // Check the context again after the wallet's asynchronous network prompt.
+    var network=await eth.request({method:'eth_chainId'}),current=await eth.request({method:'eth_accounts'});
+    if(parseInt(network,16)!==parseInt(CFG.chainHex,16))throw new Error('wrong network');
+    if(!current||!current[0]||current[0].toLowerCase()!==from.toLowerCase())throw new Error('wallet account changed');
+    hash=old&&old.hash;
+    if(!hash){
+      say('Confirm in your wallet.');
+      var data=(act==='claim'?CFG.sel.claim:CFG.sel.redeem)+word(BigInt(id));
+      pendingPut(pkey,{uncertain:true});phase='sending';
+      hash=await eth.request({method:'eth_sendTransaction',params:[{from:from,to:CFG.address,data:data}]});
+      pendingPut(pkey,{hash:hash});
+    }
+    phase='sent';
     show('Sent. Waiting for confirmation.',hash);
     for(var i=0;i<60;i++){
       var r=null;try{r=await eth.request({method:'eth_getTransactionReceipt',params:[hash]})}catch(e){}
-      if(r){if(r.status==='0x1'){show(act==='claim'?'The yield is in your wallet. Reloading.':'The coin is burned and the USDC is in your wallet. Reloading.',hash);await sleep(2000);location.reload();return}
+      if(r){pendingDrop(pkey);if(r.status==='0x1'){show(act==='claim'?'The yield is in your wallet. Refreshing holdings.':'The coin is burned and the USDC is in your wallet. Refreshing holdings.',hash);await sleep(2000);var next=new URL(location.href);next.searchParams.set('refresh','1');if(r.blockNumber)next.searchParams.set('afterBlock',BigInt(r.blockNumber).toString());location.href=next.href;return}
         show('The network rejected the transaction. Nothing was spent beyond gas.',hash);break}
       await sleep(2500);
     }
@@ -782,7 +848,8 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
   }catch(e){
     var blob='';try{blob=JSON.stringify(e)}catch(x){}blob=(blob+' '+((e&&e.message)||'')).toLowerCase();
     var said=null;for(var j=0;j<CFG.reverts.length;j++)if(blob.indexOf(CFG.reverts[j][0].toLowerCase())>=0){said=CFG.reverts[j][1];break}
-    say(e&&e.code===4001?'Cancelled in the wallet.':(said||('Failed: '+((e&&e.message)||e))));
+    if(phase==='sending'&&(e&&e.code===4001||said||/insufficient funds|allowance/i.test(blob))){phase='before';pendingDrop(pkey)}
+    show(walletErrorMessage(e,{phase:phase,hash:hash,network:CFG.name,contractMessage:said}),hash);
   }
   finally{b.removeAttribute('aria-busy');b.textContent=was}
 })});
@@ -888,7 +955,8 @@ export function coinPage(chain: ChainState, c: CoinRecord, names: Names = NO_NAM
   const prev = younger ? `<a rel="prev" href="/coin/${younger}" aria-label="Coin ${pad5(younger)}">‹</a>` : `<span class="gone"></span>`;
   const next = older ? `<a rel="next" href="/coin/${older}" aria-label="Coin ${pad5(older)}">›</a>` : `<span class="gone"></span>`;
   const owner = c.owner ? `${isAuthor(chain, c.owner) ? "held by the author" : `held by ${ownerLink(c.owner, names)}`}` : "holder unknown";
-  const body = `<main id="main" class="single">${topBar(`#${pad5(c.id)}`)}${staleNote(status)}
+  const body = `<main id="main" class="single">${topBar(`#${pad5(c.id)}`)}${staleNote(status)}${dataNote(chain, c)}
+${chain.nextId > chain.seriesSize ? `<details><summary>Looking for this number in another series?</summary><p>Some marketplace links use the number within a series. This page is token #${c.id}, series ${c.series}.</p><form action="/series-coin"><label for="series-choice">Series</label><input id="series-choice" name="series" type="number" min="1" max="${Math.ceil((chain.nextId - 1) / chain.seriesSize)}" value="${c.series}" required><input name="number" type="hidden" value="${c.number}"><button type="submit">Open coin</button></form></details>` : ""}
 ${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads on its own when it opens. If the seed never arrives, this coin can be burned for its backing from ${dateOf(c.sealedEscapeAt)}.</p>` : ""}
 <div class="step">${prev}${next}</div>
 <img class="coinimg px" src="/coin/${c.id}.svg${IMG_Q}" alt="Coin ${pad5(c.id)}" width="512" height="512">
@@ -905,6 +973,11 @@ ${downloadBar(c.id, coin.palette.bg)}
 ${footer()}${STEP_KEYS}${downloadScript()}${actionScript(chain)}${c.sealed ? sealedWatch(c.id) : ""}</main>`;
   const line = c.sealed ? "Sealed, waiting for the seed" : coin.masterName ? `Master Coin ${coin.masterName}` : [coin.traits.material, coin.traits.field, coin.traits.glyph, coin.traits.rim].join(", ");
   return layout(`Coin ${pad5(c.id)} | ${NAME}`, coin.palette, body, `/coin/${c.id}.png${IMG_Q}`, `/coin/${c.id}`, `${line}. ${c.backing} USDC backing, yield ${bpsPct(c.yieldBps)}.`);
+}
+
+export function dataNote(chain: ChainState, coin?: CoinRecord): string {
+  const data = dataFreshness(chain, coin);
+  return `<p class="small"${data.stale ? ' role="status"' : ""}>${coin ? "This coin's owner and backing" : "All holdings"} checked at <time datetime="${data.readAt}">${data.readAt.replace("T", " ").replace(/\.\d+Z$/, " UTC")}</time>.${data.stale ? " These details may have changed." : ""} <a href="?refresh=1">Refresh ${coin ? "coin" : "holdings"}</a></p>`;
 }
 
 /** A sealed coin's page asks the site every ten seconds and reloads when the seed lands. */

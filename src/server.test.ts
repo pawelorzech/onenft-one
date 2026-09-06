@@ -8,15 +8,15 @@
 import { expect, test, afterAll } from "bun:test";
 
 const CONTRACT = "0x1111111111111111111111111111111111111111";
-let port = 35000 + Math.floor(Math.random() * 1000);
 const procs: ReturnType<typeof Bun.spawn>[] = [];
 
 async function boot(env: Record<string, string>): Promise<string> {
-  const p = String(port++);
-  const proc = Bun.spawn(["bun", "run", "src/server.ts"], { env: { ...process.env, PORT: p, CHAIN_DEADLINE_MS: "400", ...env }, stdout: "pipe", stderr: "pipe" });
+  const p = "0";
+  let actualPort = 0;
+  const proc = Bun.spawn(["bun", "run", "src/server.ts"], { env: { ...process.env, PORT: p, CHAIN_DEADLINE_MS: "400", ...env }, stdout: "pipe", stderr: "pipe", ipc(message: unknown) { if (message && typeof message === "object" && "port" in message) actualPort = Number(message.port); } });
   procs.push(proc);
-  const base = `http://127.0.0.1:${p}`;
   for (let i = 0; i < 100; i++) {
+    const base = `http://127.0.0.1:${actualPort}`;
     try {
       const r = await fetch(`${base}/health`);
       if (r.ok) return base;

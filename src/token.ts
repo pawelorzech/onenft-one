@@ -25,7 +25,7 @@ export function inputOf(c: CoinRecord): MetaInput {
 }
 
 const cache = new Map<string, Coin>();
-const keyOf = (c: CoinRecord) => `${c.id}:${c.seed}:${c.yieldBps}:${c.sealed ? 1 : 0}`;
+const keyOf = (c: CoinRecord) => `${c.id}:${c.seed}:${c.yieldBps}:${c.sealed ? 1 : 0}:${c.series}:${c.number}:${c.backing}:${c.master}:${c.founder}`;
 
 /** The coin's image and traits. Cached: a revealed coin only redraws when its yield level moves. */
 export function coinOf(c: CoinRecord): Coin {
@@ -44,6 +44,13 @@ export function attrsOf(c: CoinRecord) {
 }
 
 /** The token metadata, the same JSON the contract's renderer builds. */
+const metadata = new Map<string, { json: string; coin: Coin }>();
 export function metaOf(c: CoinRecord): { json: string; coin: Coin } {
-  return metadataOf(inputOf(c));
+  const key = `${keyOf(c)}:${c.principal}:${c.lifetime}`;
+  const hit = metadata.get(key);
+  if (hit) { metadata.delete(key); metadata.set(key, hit); return hit; }
+  const result = metadataOf(inputOf(c), coinOf(c));
+  if (metadata.size >= 512) metadata.delete(metadata.keys().next().value!);
+  metadata.set(key, result);
+  return result;
 }

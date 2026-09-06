@@ -1,7 +1,7 @@
 /** JSON for other people's code and the hub. Everything here is derived from the chain; nothing is stored. */
 import { YIELD_STEPS, MASTERS, fingerprint, roman } from "./coin.ts";
 import {
-  IMG_Q, RISK, factsOf,
+  IMG_Q, RISK, factsOf, dataFreshness,
   coinIds, coinsOf, explorer, openseaCoin, type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { SITE, TABLES, oneInOf, rarestOf, isAuthor, redeemable, type Names, NO_NAMES } from "./site.ts";
@@ -22,6 +22,8 @@ export function coinJson(c: CoinRecord, chain: ChainState, names: Names = NO_NAM
   const meta = JSON.parse(json) as { name: string; description: string };
   return {
     id: c.id,
+    data: dataFreshness(chain, c),
+    seriesUrl: `https://${SITE}/series/${c.series}/coin/${c.number}`,
     series: c.series,
     number: c.number,
     name: meta.name,
@@ -102,7 +104,7 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     maxBatch: chain?.maxBatch ?? null,
     redeemLockSeconds: chain?.redeemLock ?? null,
     sealedEscapeSeconds: chain?.sealedEscape ?? null,
-    /** Wei a mint must send on to the Chainlink subscription, one fee per transaction. */
+    /** Wei a mint must send on to the Chainlink subscription, one fee per coin. */
     vrfFeeWei: chain ? chain.vrfFeeWei.toString() : null,
     backings: f.backings,
     feePercentOfYield: f.feePct,
@@ -138,6 +140,7 @@ export function holderJson(who: string, chain: ChainState, names: Names = NO_NAM
   const mine = coinsOf(chain, who);
   return {
     site: SITE,
+    data: dataFreshness(chain),
     address: who,
     name: names.get(who.toLowerCase()) ?? null,
     treasury: isAuthor(chain, who),
