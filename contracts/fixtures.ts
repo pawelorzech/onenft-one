@@ -45,6 +45,7 @@ cases.push({ ...base, seed: seedAt(2001n), number: 1, backing: 50, founder: true
 cases.push({ ...base, seed: seedAt(2002n), number: 201, backing: 50, founder: true, fundedUnits: 12400000n, lifetimeUnits: 0n, why: "founder part funded" });
 cases.push({ ...base, seed: seedAt(2003n), number: 9999, series: 2, backing: 10, fundedUnits: full(10), lifetimeUnits: 0n, why: "series II" });
 cases.push({ ...base, seed: seedAt(2004n), number: 10000, series: 14, backing: 10, fundedUnits: full(10), lifetimeUnits: 0n, why: "series XIV" });
+cases.push({ ...base, seed: seedAt(2005n), number: 7, backing: 5, fundedUnits: full(5), lifetimeUnits: 0n, why: "backing 5" });
 cases.push({ ...base, seed: 0n, number: 123, backing: 25, sealed: true, fundedUnits: full(25), lifetimeUnits: 0n, why: "sealed" });
 cases.push({ ...base, seed: 0n, number: 124, backing: 50, sealed: true, founder: true, yieldBps: 2000, fundedUnits: 0n, lifetimeUnits: 0n, why: "sealed founder with a ring" });
 
