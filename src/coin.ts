@@ -635,20 +635,22 @@ function band(grid: Grid, text: string, y: number, slot: number) {
   stamp(grid, text, x, y, slot);
 }
 
-/** SVG: one rect per run of equal colour, crisp edges. */
+/** SVG: one path per colour, one `M x y h w v1 h-w z` box per run of that colour, crisp edges. */
 export function svgOf(grid: Grid, colors: string[]): string {
-  let rects = "";
+  const runs: string[] = colors.map(() => "");
   for (let y = 0; y < N; y++) {
     let x = 0;
     while (x < N) {
       const v = grid.g[y * N + x];
       let w = 1;
       while (x + w < N && grid.g[y * N + x + w] === v) w++;
-      if (v !== 0) rects += `<rect x="${x}" y="${y}" width="${w}" height="1" fill="${colors[v]}"/>`;
+      if (v !== 0) runs[v] += `M${x} ${y}h${w}v1h-${w}z`;
       x += w;
     }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N} ${N}" shape-rendering="crispEdges"><rect width="${N}" height="${N}" fill="${colors[0]}"/>${rects}</svg>`;
+  let paths = "";
+  for (let v = 1; v < colors.length; v++) if (runs[v]) paths += `<path fill="${colors[v]}" d="${runs[v]}"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N} ${N}" shape-rendering="crispEdges"><rect width="${N}" height="${N}" fill="${colors[0]}"/>${paths}</svg>`;
 }
 
 // ---------------------------------------------------------------------------
