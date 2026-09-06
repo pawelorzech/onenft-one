@@ -13,7 +13,7 @@ import {
 } from "./coin.ts";
 import {
   SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, FEE_PCT, DEFAULT_MAX_BATCH, DEFAULT_REDEEM_LOCK, SELECTORS, MINTED_TOPIC,
-  chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound,
+  REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound, founderReady, founderNeeds,
   type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { coinOf } from "./token.ts";
@@ -516,7 +516,17 @@ ${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the 
 <p class="msg" id="msg" aria-live="polite"></p>
 <div id="sealed" hidden><p class="small">Your coins are minted and sealed. The seed arrives from Chainlink VRF a few blocks later, and this page opens them.</p><div class="strip" id="sealed-list"></div></div>
 <p class="small">The price is the backing and nothing on top; the author takes none of it. You pay the Chainlink fee, network gas, and USDC needs one approval the first time. Burning a coin sends the backing plus its yield back, minus ${FEE_PCT}% of the yield, and a coin can be burned ${days(chain.redeemLock)} days after its mint. Read <a href="/how">how it works</a> first.</p>
-<div id="founder-box" hidden><hr><h3 class="syne">Mint founder coins</h3><p class="small">This wallet is the author. Founder coins carry no backing at mint; the contract fills them from the fee on yield. The Chainlink fee is the same as any mint. ${chain.founderMinted} of ${FOUNDER_PER_SERIES} minted in series ${roman(chain.series)}.</p><div class="count"><label for="fcount">How many<input class="field" id="fcount" type="number" inputmode="numeric" min="1" max="${chain.maxBatch}" step="1" value="1"></label><button class="btn" id="founder-btn" type="button">Mint founder coins</button></div></div>
+${(() => {
+  const ready = founderReady(chain);
+  const k = chain.founderMinted + 1;
+  const needs = founderNeeds(chain);
+  const pace = ready > 0
+    ? `${ready} ${plural(ready, "coin", "coins")} open now.`
+    : chain.founderMinted >= FOUNDER_PER_SERIES
+      ? `Series ${roman(chain.series)} has all ${FOUNDER_PER_SERIES}.`
+      : `Founder coin ${k} opens after ${num(needs)} coins of series ${roman(chain.series)} are minted; ${num(chain.seriesMinted)} so far.`;
+  return `<div id="founder-box" hidden><hr><h3 class="syne">Mint founder coins</h3><p class="small">This wallet is the author. Founder coins carry no backing at mint; the contract fills them from the fee on yield. The Chainlink fee is the same as any mint. ${chain.founderMinted} of ${FOUNDER_PER_SERIES} minted in series ${roman(chain.series)}, one for every ${num(chain.founderPace)} coins the series holds. ${pace}</p><div class="count"><label for="fcount">How many<input class="field" id="fcount" type="number" inputmode="numeric" min="1" max="${Math.max(1, ready)}" step="1" value="1"${ready > 0 ? "" : " disabled"}></label><button class="btn" id="founder-btn" type="button"${ready > 0 ? "" : " disabled"}>Mint founder coins</button></div></div>`;
+})()}
 </section>`;
 }
 
@@ -535,6 +545,7 @@ export function mintScript(chain: ChainState | null): string {
     vrfFeeEth: ethOf(chain?.vrfFeeWei ?? 0n),
     sel: SELECTORS,
     mintedTopic: MINTED_TOPIC,
+    reverts: REVERTS,
   });
   return `<script>
 (function(){
@@ -550,6 +561,10 @@ function show(t,h){if(!out)return;out.textContent=t;if(h)out.insertAdjacentHTML(
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
 function word(v){return v.toString(16).padStart(64,'0')}
 function addr(a){return a.slice(2).toLowerCase().padStart(64,'0')}
+/** A wallet hands back the contract's four bytes; this turns the known ones into a sentence. */
+function reverted(e){var blob='';try{blob=JSON.stringify(e)}catch(x){}blob=(blob+' '+((e&&e.message)||'')).toLowerCase();
+  for(var i=0;i<CFG.reverts.length;i++)if(blob.indexOf(CFG.reverts[i][0].toLowerCase())>=0)return CFG.reverts[i][1];return null}
+function failed(e){return e&&e.code===4001?'Cancelled in the wallet. Nothing was sent.':e&&e.code===-32002?'The wallet is already asking. Open it to answer.':(reverted(e)||('Failed: '+((e&&e.message)||e)))}
 function money(u){var w=u/1000000n;var c=(u%1000000n)/10000n;return w.toString()+'.'+c.toString().padStart(2,'0')+' USDC'}
 function n(){var v=parseInt(count&&count.value||'1',10);if(!(v>=1))v=1;if(v>CFG.maxBatch)v=CFG.maxBatch;return v}
 function totalUnits(){return units*BigInt(n())}
@@ -661,7 +676,7 @@ async function run(){
     }
     await mintNow(need,cnt,klass);
   }catch(e){
-    say(e&&e.code===4001?'Cancelled in the wallet. Nothing was sent.':e&&e.code===-32002?'The wallet is already asking. Open it to answer.':'Failed: '+((e&&e.message)||e));
+    say(failed(e));
     lock(false);
   }
 }
@@ -678,7 +693,7 @@ async function founderRun(){
     keep(account,{stage:'mint',hash:hash});
     show('Founder mint sent. Waiting for confirmation.',hash);
     await settleLater(hash);
-  }catch(e){say(e&&e.code===4001?'Cancelled in the wallet. Nothing was sent.':'Failed: '+((e&&e.message)||e));lock(false)}
+  }catch(e){say(failed(e));lock(false)}
 }
 function seen(accs){
   var a=accs&&accs[0]||null;
@@ -705,6 +720,7 @@ export function actionScript(chain: ChainState | null): string {
     rpc: chain?.chainId === 8453 ? "https://mainnet.base.org" : "https://sepolia.base.org",
     explorer: chain ? explorer(chain.chainId) : "",
     sel: SELECTORS,
+    reverts: REVERTS,
   });
   return `<script>
 (function(){
@@ -741,7 +757,11 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
       await sleep(2500);
     }
     if(i>=60)show('We cannot confirm the transaction yet. Check it before trying again.',hash);
-  }catch(e){say(e&&e.code===4001?'Cancelled in the wallet.':'Failed: '+((e&&e.message)||e))}
+  }catch(e){
+    var blob='';try{blob=JSON.stringify(e)}catch(x){}blob=(blob+' '+((e&&e.message)||'')).toLowerCase();
+    var said=null;for(var j=0;j<CFG.reverts.length;j++)if(blob.indexOf(CFG.reverts[j][0].toLowerCase())>=0){said=CFG.reverts[j][1];break}
+    say(e&&e.code===4001?'Cancelled in the wallet.':(said||('Failed: '+((e&&e.message)||e))));
+  }
   finally{b.removeAttribute('aria-busy');b.textContent=was}
 })});
 })();

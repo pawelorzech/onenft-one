@@ -59,6 +59,7 @@ export const ABI = parseAbi([
   "function MAX_BATCH() view returns (uint8)",
   "function vrfFeeWei() view returns (uint256)",
   "function REDEEM_LOCK() view returns (uint256)",
+  "function FOUNDER_PACE() view returns (uint256)",
   "function RETRY_BLOCKS() view returns (uint256)",
   "function ownerOf(uint256 id) view returns (address)",
   "function yieldBps(uint256 id) view returns (uint32)",
@@ -74,6 +75,15 @@ export const ABI = parseAbi([
   "event Revealed(uint256 indexed id, uint64 seed, uint16 slot)",
   "event Claimed(uint256 indexed id, address indexed to, uint256 assets, uint256 fee)",
   "event Redeemed(uint256 indexed id, address indexed to, uint256 assets, uint256 fee)",
+  // The reverts a minter or a holder can meet. The browser matches them by selector and says
+  // what happened in words; without them a wallet shows four bytes of hex.
+  "error FounderTooEarly(uint256 series, uint256 k, uint256 needed)",
+  "error VaultFull(uint256 assets, uint256 maxDeposit)",
+  "error VaultIlliquid(uint256 needed, uint256 available)",
+  "error TooSoon(uint256 id, uint256 redeemableAt)",
+  "error SealedCoin(uint256 id)",
+  "error FeeTooLow(uint256 needed, uint256 sent)",
+  "error NothingToClaim(uint256 id)",
 ]);
 
 /** The ERC-20 calls the browser makes against USDC before a mint. */
@@ -93,6 +103,20 @@ export const SELECTORS = {
   allowance: toFunctionSelector("function allowance(address,address)"),
   balanceOf: toFunctionSelector("function balanceOf(address)"),
 } as const;
+
+/**
+ * What each revert means, by selector. The wallet hands the page four bytes and nothing else,
+ * so the page carries the sentence. Order does not matter; the selector is the key.
+ */
+export const REVERTS: [string, string][] = [
+  ["FounderTooEarly(uint256,uint256,uint256)", "This founder coin is not open yet. The series has to hold more coins first."],
+  ["VaultFull(uint256,uint256)", "The vault is not taking deposits right now. Nothing was spent beyond gas. Try again later."],
+  ["VaultIlliquid(uint256,uint256)", "The vault cannot release that much right now. Your coin is untouched. Try again later."],
+  ["TooSoon(uint256,uint256)", "This coin cannot be burned yet. Thirty days must pass after its mint."],
+  ["SealedCoin(uint256)", "A sealed coin cannot be burned. Wait for its seed, then burn it."],
+  ["FeeTooLow(uint256,uint256)", "The Chainlink fee changed while this page was open. Reload it and mint again."],
+  ["NothingToClaim(uint256)", "There is nothing to claim on this coin yet."],
+].map(([sig, said]) => [toFunctionSelector(sig), said]);
 
 /** The first topic of `Minted`. The browser reads the new coins' ids from it; a mint receipt also carries ERC-721 `Transfer` logs, and those must not be mistaken for it. */
 export const MINTED_TOPIC = toEventSelector("Minted(uint256,address,uint8,uint256)");
@@ -171,6 +195,8 @@ export type ChainState = {
   redeemLock: number;
   /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per transaction, whatever the count. */
   vrfFeeWei: bigint;
+  /** Coins of a series that must exist per founder coin before the author may mint the next one. */
+  founderPace: number;
   /** The three backing classes in whole USDC, read from the contract. */
   backings: number[];
   /** Every coin that exists, by id. A redeemed coin leaves the map. */
@@ -212,6 +238,20 @@ export function publicClient() {
 export function scrubError(e: unknown): string {
   const m = ((e as any)?.shortMessage ?? (e as Error)?.message ?? String(e)).split("\n")[0];
   return m.replace(/https?:\/\/\S+/g, "[rpc]").slice(0, 200);
+}
+
+/**
+ * How many founder coins the author may mint right now. Founder coin k of a series waits until
+ * the series already holds `FOUNDER_PACE * k` coins, and a batch is judged by its last coin,
+ * so the answer is how many whole paces the series has run, less the founder coins already out.
+ */
+export function founderReady(chain: ChainState): number {
+  const earned = Math.floor(chain.seriesMinted / chain.founderPace) - chain.founderMinted;
+  return Math.max(0, Math.min(earned, chain.maxBatch, FOUNDER_PER_SERIES - chain.founderMinted));
+}
+/** The coins the series needs before the author's next founder coin opens. */
+export function founderNeeds(chain: ChainState): number {
+  return chain.founderPace * (chain.founderMinted + 1);
 }
 
 export const seriesOf = (id: number) => Math.floor((id - 1) / SERIES_SIZE) + 1;
@@ -284,11 +324,11 @@ function idsToRead(last: number, all: boolean): number[] {
 async function readChainState(): Promise<ChainState> {
   if (!client || !CONTRACT) throw new Error("no contract configured");
   const c = { address: CONTRACT, abi: ABI } as const;
-  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, b0, b1, b2] = await client.multicall({
+  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, founderPace, b0, b1, b2] = await client.multicall({
     contracts: [
       { ...c, functionName: "author" }, { ...c, functionName: "renderer" }, { ...c, functionName: "rendererLocked" },
       { ...c, functionName: "minted" }, { ...c, functionName: "nextId" }, { ...c, functionName: "USDC" }, { ...c, functionName: "VAULT" },
-      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" },
+      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" }, { ...c, functionName: "FOUNDER_PACE" },
       { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] },
     ],
     allowFailure: false,
@@ -342,6 +382,7 @@ async function readChainState(): Promise<ChainState> {
     maxBatch: Number(maxBatch),
     redeemLock: Number(redeemLock),
     vrfFeeWei,
+    founderPace: Number(founderPace),
     backings,
     coins,
     readAt: Date.now(),

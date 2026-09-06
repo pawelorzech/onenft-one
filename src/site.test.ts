@@ -12,7 +12,7 @@ import { stateJson, holderJson, specJson, coinJson } from "./api.ts";
 import { holderFacts } from "./facts.ts";
 import { coinOf, inputOf, metaOf } from "./token.ts";
 import { MATERIALS } from "./coin.ts";
-import { SERIES_SIZE, type ChainState, type ChainStatus, type CoinRecord } from "./contract.ts";
+import { SERIES_SIZE, REVERTS, founderReady, founderNeeds, type ChainState, type ChainStatus, type CoinRecord } from "./contract.ts";
 import type { Address } from "viem";
 
 /** A mint far enough in the past that the lock has run out, so redeem is open in the tests that want it. */
@@ -75,6 +75,7 @@ export function fakeChain(extra: Partial<ChainState> = {}): ChainState {
     maxBatch: 10,
     redeemLock: 30 * 86400,
     vrfFeeWei: 300_000_000_000_000n,
+    founderPace: 200,
     backings: [10, 25, 50],
     coins,
     readAt: Date.now(),
@@ -202,6 +203,44 @@ test("the thirty day lock: burning is shut with a date until it runs out, and sh
   expect(sealed).toMatch(/data-act="redeem"[^>]*disabled/);
   expect(redeemable(open.coins.get(3)!)).toBe(false);
   expect(howPage(open, OK)).toContain("30 days after its mint");
+});
+
+test("founder pacing: the box says when the next one opens and shuts the button until then", () => {
+  // 3 coins in the series, 1 founder out: the next needs 400 and nothing is open.
+  const shut = homePage(fakeChain(), OK);
+  expect(shut).toContain("Founder coin 2 opens after 400 coins of series I are minted; 3 so far");
+  expect(shut).toContain("one for every 200 coins the series holds");
+  expect(shut).toMatch(/id="founder-btn"[^>]*disabled/);
+  expect(founderReady(fakeChain())).toBe(0);
+  expect(founderNeeds(fakeChain())).toBe(400);
+  // 900 coins in the series with 1 founder out: paces 1 to 4 are earned, 3 are still owed.
+  const open = fakeChain({ seriesMinted: 900, founderMinted: 1 });
+  expect(founderReady(open)).toBe(3);
+  const h = homePage(open, OK);
+  expect(h).toContain("3 coins open now.");
+  expect(h).not.toMatch(/id="founder-btn"[^>]*disabled/);
+  expect(h).toContain('max="3"');
+  // The batch cap still wins over a long backlog.
+  expect(founderReady(fakeChain({ seriesMinted: 9000, founderMinted: 0 }))).toBe(10);
+  // A series that has all fifty says so.
+  expect(homePage(fakeChain({ seriesMinted: 9000, founderMinted: 50 }), OK)).toContain("Series I has all 50.");
+});
+
+test("a revert the contract can throw reaches the reader as a sentence, not four bytes of hex", () => {
+  const h = homePage(fakeChain(), OK);
+  const coin = coinPage(fakeChain(), fakeChain().coins.get(2)!, new Map(), OK);
+  // Each selector travels with the page, next to what it means.
+  for (const [selector, said] of REVERTS) {
+    expect(h).toContain(selector);
+    expect(h).toContain(said);
+  }
+  expect(h).toContain("This founder coin is not open yet");
+  expect(h).toContain("The vault is not taking deposits right now");
+  expect(coin).toContain("The vault cannot release that much right now");
+  expect(coin).toContain("A sealed coin cannot be burned");
+  // Every selector is four bytes and they are all different.
+  expect(REVERTS.every(([s]) => /^0x[0-9a-f]{8}$/.test(s))).toBe(true);
+  expect(new Set(REVERTS.map(([s]) => s)).size).toBe(REVERTS.length);
 });
 
 test("the author's coin says the author holds it, and a founder coin shows what is funded", () => {
