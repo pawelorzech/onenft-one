@@ -43,10 +43,11 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 ///
 /// Fifty founder coins a series are reserved for the author, free. Their backing is not paid at
 /// mint: the contract fills it from the author's ten percent of yield, oldest founder coin
-/// first, until each holds fifty USDC. Nobody else's money ever backs one. They are paced:
-/// founder coin k waits until the series reaches two hundred times k coins, counting the coin
-/// itself, so the author cannot save the free mints for a moment when the urn happens to be
-/// dense with masters. Coin fifty lands on the ten thousandth coin, the last of its series.
+/// first, until each holds fifty USDC. Nobody else's money ever backs one. They are paced: the
+/// series is cut into fifty bands of two hundred coins, and founder coin k must be minted inside
+/// band k or not at all, so a band that closes empty forfeits that coin for good. The author can
+/// neither hold a free mint back for a moment when the urn is dense with masters nor bring one
+/// forward. Band fifty is coins 9801 to 10000, so the last founder coin can close its series.
 ///
 /// The image is drawn by a separate renderer from the coin's own numbers. The renderer
 /// address is pinned per coin at mint, so `setRenderer` touches future coins only, and
@@ -169,6 +170,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     mapping(uint256 series => Urn) internal _urns;
     /// @notice Founder coins minted so far, per series.
     mapping(uint256 series => uint16 minted) public founderMinted;
+    /// @notice The band the last founder coin of a series took. Bands are spent in order and a
+    /// band that closes without its coin is gone, so this is not the same as `founderMinted`.
+    mapping(uint256 series => uint16 band) public lastFounderBand;
 
     /// @notice The renderer new coins are pinned to.
     address public renderer;
@@ -218,7 +222,8 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     error SealedCoin(uint256 id);
     error TooSoon(uint256 id, uint256 redeemableAt);
     error FeeTooLow(uint256 want, uint256 got);
-    error FounderTooEarly(uint256 series, uint256 k, uint256 needed);
+    error FounderTooEarly(uint256 series, uint256 k, uint256 opensAt);
+    error FounderBandMissed(uint256 series, uint256 k, uint256 closedAt);
     error VaultFull(uint256 assets, uint256 maxDeposit);
     error VaultIlliquid(uint256 needed, uint256 available);
     error PayoutFailed();
@@ -292,6 +297,43 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @return the coin's place inside its series, 1..SERIES_SIZE
     function numberOf(uint256 id) public pure returns (uint256) {
         return (id - 1) % SERIES_SIZE + 1;
+    }
+
+    /// @dev The place the next coin of `series` would take inside it, 1..SERIES_SIZE. A series
+    /// already behind reads as SERIES_SIZE + 1, one past its end, and one not yet reached reads
+    /// as 0, so no band is ever open in either.
+    function _nextPosition(uint256 series) internal view returns (uint256) {
+        uint256 current = seriesOf(nextId);
+        if (series < current) return SERIES_SIZE + 1;
+        // A series nobody has reached yet holds no position at all, so no band in it is open.
+        if (series > current) return 0;
+        return numberOf(nextId);
+    }
+
+    /// @return the band the next founder coin of a series would take, 1..50 while any is left
+    function founderBand(uint256 series) public view returns (uint256) {
+        uint256 position = _nextPosition(series);
+        uint256 band = (position + FOUNDER_PACE - 1) / FOUNDER_PACE;
+        if (band == 0) band = 1;
+        uint256 spent = lastFounderBand[series];
+        return band > spent ? band : uint256(spent) + 1;
+    }
+
+    /// @notice Where the next founder coin of a series can be minted, for the site to show.
+    /// @return k the band, 1..50
+    /// @return opensAt the first position of that band
+    /// @return closesAt the last position of that band
+    /// @return open true when the series is standing inside the band right now
+    function founderWindow(uint256 series)
+        external
+        view
+        returns (uint256 k, uint256 opensAt, uint256 closesAt, bool open)
+    {
+        k = founderBand(series);
+        opensAt = FOUNDER_PACE * (k - 1) + 1;
+        closesAt = FOUNDER_PACE * k;
+        uint256 position = _nextPosition(series);
+        open = k <= FOUNDERS_PER_SERIES && position >= opensAt && position <= closesAt;
     }
 
     /// @return the backing of a class in USDC units, six decimals
@@ -386,15 +428,22 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (seriesOf(lastId) != series) revert SeriesBoundary(firstId, lastId);
         uint16 already = founderMinted[series];
         if (already + count > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
-        // Founder coin k of a series waits until the series reaches 200 times k coins, counting
-        // the coin being minted, and a batch is judged by its last coin. This is what stops the
-        // author from saving the free mints for a moment when the urn happens to be dense with
-        // masters; the odds are public, so everyone reads the same numbers and the author cannot
-        // act on them alone. Coin fifty lands on 10000, which is the last coin of the series, so
-        // all fifty reserved slots stay reachable.
-        uint256 k = uint256(already) + count;
-        uint256 needed = FOUNDER_PACE * k;
-        if (numberOf(lastId) < needed) revert FounderTooEarly(series, k, needed);
+        // The series is cut into fifty bands of two hundred coins, and founder coin k has to be
+        // minted inside band k or not at all. A band that closes without its coin is forfeited,
+        // which is why the band comes from where the series has reached and not from how many
+        // founder coins exist. The author cannot hold a free mint back for a moment when the urn
+        // is dense with masters, and cannot bring one forward either.
+        uint256 k = founderBand(series);
+        if (k + count - 1 > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
+        for (uint256 i = 0; i < count; i++) {
+            uint256 band = k + i;
+            uint256 position = numberOf(firstId + i);
+            uint256 opensAt = FOUNDER_PACE * (band - 1) + 1;
+            if (position < opensAt) revert FounderTooEarly(series, band, opensAt);
+            uint256 closesAt = FOUNDER_PACE * band;
+            if (position > closesAt) revert FounderBandMissed(series, band, closesAt);
+        }
+        lastFounderBand[series] = uint16(k + count - 1);
         founderMinted[series] = already + count;
 
         for (uint256 i = 0; i < count; i++) {
@@ -499,7 +548,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// The mint paid for one answer; if the subscription has since run dry, whoever wants the
     /// coins open can pay for the next attempt rather than leave the batch sealed for good.
     /// @return newRequestId the id of the fresh request
-    function retry(uint256 requestId) external payable returns (uint256 newRequestId) {
+    function retry(uint256 requestId) external payable nonReentrant returns (uint256 newRequestId) {
         Request memory r = requests[requestId];
         if (r.count == 0) revert NoSuchRequest(requestId);
         // Only the newest request of a batch may be retried. Without this every open request
@@ -787,6 +836,8 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (nextFounderToFund < founderIds.length) revert FoundersUnfunded(nextFounderToFund);
         uint256 shares = treasuryShares;
         if (shares == 0) revert NothingInTreasury();
+        uint256 available = VAULT.maxRedeem(address(this));
+        if (shares > available) revert VaultIlliquid(shares, available);
         treasuryShares = 0;
         assets = VAULT.redeem(shares, to, address(this));
         emit TreasuryWithdrawn(to, assets);
@@ -806,7 +857,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @notice ETH forced into this contract goes to the author. Nothing in the normal flow
     /// leaves any here: a mint's fee is forwarded to the subscription in the same transaction.
     /// This touches no coin's shares and no holder's USDC, only ETH that should not exist.
-    function sweep() external {
+    function sweep() external nonReentrant {
         (bool ok,) = author.call{value: address(this).balance}("");
         if (!ok) revert PayoutFailed();
     }
@@ -821,6 +872,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// still reads false. `lockRenderer` is the one sanctioned way to freeze.
     function renounceOwnership() public pure override {
         revert OwnershipIsPermanent();
+    }
+
+    /// @dev Chainlink's coordinator refuses to migrate a subscription while a request is still
+    /// pending, which is exactly the case a stuck request creates. The author can finish the move
+    /// instead. This points the consumer somewhere else and touches no coin and no money.
+    function _canSetCoordinator(address who) internal view override returns (bool) {
+        return who == owner();
     }
 
     /// @dev `author` is immutable and takes the founder coins. If ownership could move, the owner

@@ -35,8 +35,8 @@ contract OneCoinTest is Test {
     /// @dev Slots of `nextId` and `minted`, from `forge inspect OneCoin storage`. Used to walk
     /// the id counter without minting thousands of coins first. `_jumpTo` checks the write
     /// landed, so a change to the storage layout fails here instead of quietly skewing tests.
-    uint256 internal constant SLOT_NEXT_ID = 13;
-    uint256 internal constant SLOT_MINTED = 14;
+    uint256 internal constant SLOT_NEXT_ID = 14;
+    uint256 internal constant SLOT_MINTED = 15;
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -94,9 +94,17 @@ contract OneCoinTest is Test {
         assertEq(token.minted(), id - 1, "SLOT_MINTED is stale, re-read forge inspect OneCoin storage");
     }
 
-    /// @dev Walk the series far enough that founder coin `k` is past its pacing gate.
-    function _paceFounder(uint256 k) internal {
-        _jumpTo(token.FOUNDER_PACE() * k + 1);
+    /// @dev Walk the series to the first coin of band `k`, where founder coin k must be minted.
+    function _enterBand(uint256 k) internal {
+        _jumpTo(token.FOUNDER_PACE() * (k - 1) + 1);
+    }
+
+    /// @dev Mint band `k`'s founder coin. Each band holds exactly one, so a test that wants
+    /// several walks several bands.
+    function _founderInBand(uint256 k, address to) internal returns (uint256 id) {
+        _enterBand(k);
+        vm.prank(author);
+        id = token.mintFounder{value: FEE}(1, to);
     }
 
     function _view(
@@ -257,10 +265,10 @@ contract OneCoinTest is Test {
     // ---- founder mint ----
 
     function test_MintFounderIsFreeUnbackedAndSealed() public {
-        _paceFounder(2);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(2, author);
-        assertEq(f, 401, "the first two founder coins wait for four hundred coins to exist");
+        uint256 f = _founderInBand(1, author);
+        assertEq(f, 1, "band one is coins 1 to 200, so the first founder coin can be coin one");
+        uint256 second = _founderInBand(2, author);
+        assertEq(second, 201, "and the next one waits for band two");
         assertEq(usdc.balanceOf(address(vault)), 0, "no money moved");
         OneCoin.CoinInfo memory c = token.coinOf(f);
         assertTrue(c.founder);
@@ -269,7 +277,7 @@ contract OneCoinTest is Test {
         assertEq(c.shares, 0);
         assertEq(c.backingClass, 2, "a founder coin is a fifty");
         assertEq(token.ownerOf(f), author);
-        assertEq(token.ownerOf(f + 1), author);
+        assertEq(token.ownerOf(second), author);
         assertEq(token.founderCount(), 2);
         assertEq(token.founderMinted(1), 2);
     }
@@ -283,73 +291,118 @@ contract OneCoinTest is Test {
     /// @dev Pacing counts the coin being minted, so founder coin k lands on coin 200k of the
     /// series and the fiftieth lands on coin 10000, the last one. All fifty reserved slots are
     /// reachable and the last founder coin closes its series.
-    function test_TheFiftiethFounderCoinIsTheSeriesFinalCoin() public {
-        for (uint256 batch = 1; batch <= 4; batch++) {
-            _jumpTo(token.FOUNDER_PACE() * batch * 10 + 1);
-            vm.prank(author);
-            token.mintFounder{value: FEE}(10, author);
+    /// @dev Every one of the fifty bands can be taken, and the fiftieth is coins 9801 to 10000,
+    /// so the last founder coin of a series can be its last coin.
+    function test_AllFiftyBandsAreReachableAndTheFiftiethClosesTheSeries() public {
+        for (uint256 band = 1; band <= 49; band++) {
+            _founderInBand(band, author);
         }
-        assertEq(token.founderMinted(1), 40);
-
-        _jumpTo(9801);
-        vm.prank(author);
-        token.mintFounder{value: FEE}(9, author);
         assertEq(token.founderMinted(1), 49);
+        assertEq(token.lastFounderBand(1), 49);
 
-        // Coin fifty needs the series to reach 10000, so it cannot land one short of the end.
-        _jumpTo(9999);
-        vm.prank(author);
-        vm.expectRevert(
-            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(50), uint256(10000))
-        );
-        token.mintFounder{value: FEE}(1, author);
+        (uint256 k, uint256 opensAt, uint256 closesAt,) = token.founderWindow(1);
+        assertEq(k, 50);
+        assertEq(opensAt, 9801, "band fifty is coins 9801 to 10000");
+        assertEq(closesAt, 10000);
 
-        // On the last coin of the series it goes through, and the reserve is full.
+        // The very last coin of the series is still inside band fifty.
         _jumpTo(10000);
+        (,,, bool open) = token.founderWindow(1);
+        assertTrue(open);
         vm.prank(author);
         uint256 id = token.mintFounder{value: FEE}(1, author);
         assertEq(id, 10000);
-        assertEq(token.seriesOf(id), 1);
         assertEq(token.numberOf(id), 10000, "the fiftieth founder closes the series");
         assertEq(token.founderMinted(1), 50, "all fifty reserved slots were reachable");
     }
 
-    function test_FounderPacingHoldsTheFirstFreeMintBack() public {
+    function test_OneFounderCoinPerBandAndTheNextOneWaits() public {
+        (uint256 k, uint256 opensAt, uint256 closesAt, bool open) = token.founderWindow(1);
+        assertEq(k, 1);
+        assertEq(opensAt, 1);
+        assertEq(closesAt, 200);
+        assertTrue(open, "band one is open from the first coin of the series");
+
+        vm.prank(author);
+        assertEq(token.mintFounder{value: FEE}(1, author), 1);
+        assertEq(token.lastFounderBand(1), 1);
+
+        // Band one is spent, so the next founder coin belongs to band two and has to wait for it.
+        (k, opensAt, closesAt, open) = token.founderWindow(1);
+        assertEq(k, 2);
+        assertEq(opensAt, 201);
+        assertEq(closesAt, 400);
+        assertFalse(open, "the series is still standing in band one");
+
         vm.prank(author);
         vm.expectRevert(
-            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(1), uint256(200))
+            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(2), uint256(201))
         );
         token.mintFounder{value: FEE}(1, author);
 
-        // One coin short is still short.
-        _jumpTo(199);
-        vm.prank(author);
-        vm.expectRevert(
-            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(1), uint256(200))
-        );
-        token.mintFounder{value: FEE}(1, author);
-
-        // Founder coin one is coin two hundred of the series, counting itself.
+        // One coin short of band two is still short.
         _jumpTo(200);
         vm.prank(author);
-        assertEq(token.mintFounder{value: FEE}(1, author), 200);
+        vm.expectRevert(
+            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(2), uint256(201))
+        );
+        token.mintFounder{value: FEE}(1, author);
+
+        _jumpTo(201);
+        (,,, open) = token.founderWindow(1);
+        assertTrue(open);
+        vm.prank(author);
+        assertEq(token.mintFounder{value: FEE}(1, author), 201);
     }
 
-    function test_AFounderBatchIsJudgedByItsLastCoin() public {
-        // Three at once is founder coins 1, 2 and 3, so the gate is 600, not 200, and the last
-        // coin of the batch is the one that has to reach it.
-        _jumpTo(597);
+    /// @dev A band that closes with no founder coin in it is gone. The slot is never minted and
+    /// the next founder coin belongs to whatever band the series has reached, so a missed band
+    /// cannot wedge the queue.
+    function test_ABandThatClosesEmptyIsForfeited() public {
+        // Walk straight past bands one and two without minting.
+        _jumpTo(401);
+        assertEq(token.founderBand(1), 3, "the series is in band three and that is what is on offer");
+        (uint256 k, uint256 opensAt, uint256 closesAt, bool open) = token.founderWindow(1);
+        assertEq(k, 3);
+        assertEq(opensAt, 401);
+        assertEq(closesAt, 600);
+        assertTrue(open);
+
+        vm.prank(author);
+        uint256 id = token.mintFounder{value: FEE}(1, author);
+        assertEq(id, 401);
+        assertEq(token.lastFounderBand(1), 3);
+        assertEq(token.founderMinted(1), 1, "one coin minted, two bands forfeited for good");
+        assertLt(token.founderMinted(1), token.lastFounderBand(1));
+    }
+
+    function test_TheWindowIsShutOnASeriesThatIsOverOrHasNotStarted() public {
+        _jumpTo(10001);
+        (,,, bool open) = token.founderWindow(1);
+        assertFalse(open, "series one is behind us");
+        assertEq(token.founderBand(1), 51, "and past its last band");
+
+        (uint256 k,,, bool openNext) = token.founderWindow(3);
+        assertEq(k, 1, "series three has not started, so band one is what waits there");
+        assertFalse(openNext);
+    }
+
+    /// @dev A batch is judged coin by coin, and consecutive coins cannot each sit in their own
+    /// two hundred coin band. So in practice the author mints one founder coin at a time.
+    function test_AFounderBatchIsJudgedCoinByCoinSoBatchesDoNotFit() public {
+        _jumpTo(401);
+        // Coins at 401, 402 and 403 would have to be bands 3, 4 and 5. The second one is nowhere
+        // near band four, which opens at 601.
         vm.prank(author);
         vm.expectRevert(
-            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(3), uint256(600))
+            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(4), uint256(601))
         );
         token.mintFounder{value: FEE}(3, author);
 
-        _jumpTo(598);
+        // One at a time is the way.
         vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(3, author);
-        assertEq(token.numberOf(f + 2), 600, "the last coin of the batch lands exactly on the gate");
-        assertEq(token.founderMinted(1), 3);
+        assertEq(token.mintFounder{value: FEE}(1, author), 401);
+        assertEq(token.founderMinted(1), 1);
     }
 
     function test_MintFounderRefusesToCrossASeriesBoundary() public {
@@ -358,35 +411,32 @@ contract OneCoinTest is Test {
         vm.expectRevert(abi.encodeWithSelector(OneCoin.SeriesBoundary.selector, uint256(9996), uint256(10005)));
         token.mintFounder{value: FEE}(10, author);
 
-        // Right up to the boundary is fine.
+        // A single coin inside the series is fine, and band fifty reaches its last id.
+        _jumpTo(10000);
         vm.prank(author);
-        uint256 firstId = token.mintFounder{value: FEE}(5, author);
-        assertEq(firstId, 9996);
-        assertEq(token.seriesOf(10000), 1);
-        assertEq(token.founderMinted(1), 5);
+        uint256 lastOfSeries = token.mintFounder{value: FEE}(1, author);
+        assertEq(lastOfSeries, 10000);
+        assertEq(token.seriesOf(lastOfSeries), 1);
+        assertEq(token.founderMinted(1), 1);
     }
 
-    function test_FounderReserveAndPacingAreCountedPerSeries() public {
-        _paceFounder(10);
-        vm.prank(author);
-        token.mintFounder{value: FEE}(10, author);
-        assertEq(token.founderMinted(1), 10);
+    function test_BandsAndTheReserveAreCountedPerSeries() public {
+        _founderInBand(1, author);
+        _founderInBand(2, author);
+        assertEq(token.founderMinted(1), 2);
+        assertEq(token.lastFounderBand(1), 2);
 
-        // Series two starts its own count and its own pacing: 2000 coins of series two, not of
-        // the collection, unlock founder coin ten of series two.
-        _jumpTo(10001 + 100);
+        // Series two starts again from band one: 200 coins of series two, not of the collection.
+        _jumpTo(10001);
+        assertEq(token.founderBand(2), 1, "a fresh series is back in band one");
         vm.prank(author);
-        vm.expectRevert(
-            abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(2), uint256(10), uint256(2000))
-        );
-        token.mintFounder{value: FEE}(10, author);
-
-        _jumpTo(10000 + 2001);
-        vm.prank(author);
-        uint256 id = token.mintFounder{value: FEE}(10, author);
+        uint256 id = token.mintFounder{value: FEE}(1, author);
         assertEq(token.seriesOf(id), 2);
-        assertEq(token.founderMinted(2), 10);
-        assertEq(token.founderMinted(1), 10, "series one is untouched");
+        assertEq(token.numberOf(id), 1);
+        assertEq(token.founderMinted(2), 1);
+        assertEq(token.lastFounderBand(2), 1);
+        assertEq(token.founderMinted(1), 2, "series one is untouched");
+        assertEq(token.lastFounderBand(1), 2);
     }
 
     // ---- reveal ----
@@ -612,7 +662,7 @@ contract OneCoinTest is Test {
 
     // ---- the coordinator can hand this consumer on ----
 
-    function test_OnlyTheCoordinatorCanMoveTheConsumer() public {
+    function test_OnlyTheCoordinatorOrTheAuthorCanMoveTheConsumer() public {
         MockVRFCoordinator next = new MockVRFCoordinator();
         vm.prank(stranger);
         vm.expectRevert(
@@ -620,8 +670,8 @@ contract OneCoinTest is Test {
         );
         token.setCoordinator(address(next));
 
-        vm.prank(author);
-        vm.expectRevert(abi.encodeWithSignature("OnlyCoordinatorCanSet(address,address)", author, address(vrf)));
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSignature("OnlyCoordinatorCanSet(address,address)", holder, address(vrf)));
         token.setCoordinator(address(next));
 
         vm.prank(address(vrf));
@@ -629,6 +679,29 @@ contract OneCoinTest is Test {
         token.setCoordinator(address(0));
 
         assertEq(token.vrfCoordinator(), address(vrf), "nothing moved");
+    }
+
+    /// @dev The coordinator refuses to migrate a subscription while a request is still pending,
+    /// which is the one case that needs migrating. So the author can finish the move.
+    function test_TheAuthorCanFinishAMigrationTheCoordinatorCannot() public {
+        uint256 id = _buy(buyer, 0, 1, holder);
+        MockVRFCoordinator next = new MockVRFCoordinator();
+
+        vm.prank(author);
+        token.setCoordinator(address(next));
+        assertEq(token.vrfCoordinator(), address(next));
+
+        // It moves the coordinator and nothing else: the coin, its shares and its money are where
+        // they were, and the author still cannot touch them.
+        assertEq(token.ownerOf(id), holder);
+        assertGt(token.sharesOf(id), 0);
+        assertEq(usdc.balanceOf(author), 0);
+
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSignature("OnlyCoordinatorCanSet(address,address)", stranger, address(next))
+        );
+        token.setCoordinator(address(vrf));
     }
 
     function test_AfterAMigrationTheNewCoordinatorAnswersAndTheOldOneCannot() public {
@@ -1108,13 +1181,11 @@ contract OneCoinTest is Test {
     }
 
     function test_AFounderMintPaysTheRandomnessFeeToo() public {
-        _paceFounder(1);
         vm.prank(author);
         vm.expectRevert(abi.encodeWithSelector(OneCoin.FeeTooLow.selector, FEE, uint256(0)));
         token.mintFounder{value: 0}(1, author);
 
-        vm.prank(author);
-        token.mintFounder{value: FEE}(1, author);
+        _founderInBand(1, author);
         assertEq(vrf.nativeFunded(SUB_ID), FEE);
     }
 
@@ -1292,6 +1363,28 @@ contract OneCoinTest is Test {
         assertApproxEqAbs(token.nav(id), 50e6, 3, "the backing is untouched");
     }
 
+    function test_TheTreasuryWaitsOnAnIlliquidVaultRatherThanRevertInsideIt() public {
+        uint256 f = _founderInBand(1, author);
+        uint256 id = _buy(buyer, 2, 1, holder);
+        vault.gain(2000e6);
+        vm.prank(holder);
+        token.claim(id);
+        assertEq(token.coinOf(f).principal, 50e6, "the founder coin is full, so the treasury is free");
+
+        uint256 shares = token.treasuryShares();
+        assertGt(shares, 0);
+        vault.setRedeemCap(shares - 1);
+        vm.prank(author);
+        vm.expectRevert(abi.encodeWithSelector(OneCoin.VaultIlliquid.selector, shares, shares - 1));
+        token.withdrawTreasury(author);
+        assertEq(token.treasuryShares(), shares, "nothing was spent on the attempt");
+
+        vault.setRedeemCap(type(uint256).max);
+        vm.prank(author);
+        assertGt(token.withdrawTreasury(author), 0);
+        assertEq(token.treasuryShares(), 0);
+    }
+
     // ---- what is booked is what moved ----
 
     function test_LifetimeNeverExceedsWhatWasPaidOutPlusTheFee() public {
@@ -1401,9 +1494,9 @@ contract OneCoinTest is Test {
     // ---- founder funding ----
 
     function test_FoundersAreFundedOldestFirst() public {
-        _paceFounder(3);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(3, author);
+        uint256 f = _founderInBand(1, author);
+        uint256 f2 = _founderInBand(2, author);
+        uint256 f3 = _founderInBand(3, author);
         uint256 id = _buy(buyer, 2, 1, holder);
 
         // A big gain so the fee is worth more than two founder coins but less than three.
@@ -1412,21 +1505,19 @@ contract OneCoinTest is Test {
         token.claim(id);
         // The claim funds one founder coin on its way out.
         assertEq(token.coinOf(f).principal, 50e6, "the oldest founder coin is full");
-        assertEq(token.coinOf(f + 1).principal, 0, "the next one has not started");
+        assertEq(token.coinOf(f2).principal, 0, "the next one has not started");
 
         token.fundFounders(3);
         assertEq(token.coinOf(f).principal, 50e6);
-        assertEq(token.coinOf(f + 1).principal, 50e6);
-        assertLt(token.coinOf(f + 2).principal, 50e6, "the third took what was left");
-        assertGt(token.coinOf(f + 2).principal, 0);
+        assertEq(token.coinOf(f2).principal, 50e6);
+        assertLt(token.coinOf(f3).principal, 50e6, "the third took what was left");
+        assertGt(token.coinOf(f3).principal, 0);
         assertEq(token.treasuryShares(), 0, "the treasury went into the coins");
         assertEq(token.nextFounderToFund(), 2, "the pointer sits on the coin still short");
     }
 
     function test_AFundedFounderCoinHoldsRealSharesAndEarns() public {
-        _paceFounder(1);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(1, author);
+        uint256 f = _founderInBand(1, author);
         uint256 founderRequest = _lastRequest();
         uint256 id = _buy(buyer, 2, 1, holder);
         vault.gain(1000e6);
@@ -1450,19 +1541,18 @@ contract OneCoinTest is Test {
     }
 
     function test_FundFoundersDoesNothingWithAnEmptyTreasury() public {
-        _paceFounder(2);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(2, author);
+        uint256 f = _founderInBand(1, author);
+        _founderInBand(2, author);
         token.fundFounders(10);
         assertEq(token.coinOf(f).principal, 0);
         assertEq(token.nextFounderToFund(), 0);
     }
 
     function test_FundFoundersSkipsAFounderCoinThatWasBurned() public {
-        _paceFounder(2);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(2, author);
-        _reveal(_lastRequest(), 4);
+        uint256 f = _founderInBand(1, author);
+        uint256 firstRequest = _lastRequest();
+        uint256 f2 = _founderInBand(2, author);
+        _reveal(firstRequest, 4);
         _ripen();
         vm.prank(author);
         token.redeem(f);
@@ -1473,14 +1563,14 @@ contract OneCoinTest is Test {
         token.claim(id);
         token.fundFounders(5);
 
-        assertEq(token.coinOf(f + 1).principal, 50e6, "the burned coin does not block the queue");
+        assertEq(token.coinOf(f2).principal, 50e6, "the burned coin does not block the queue");
         assertEq(token.nextFounderToFund(), 2);
     }
 
     function test_AFounderCoinIsNeverCreditedMoreThanItsSharesAreWorth() public {
-        _paceFounder(3);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(3, author);
+        uint256 f = _founderInBand(1, author);
+        uint256 f2 = _founderInBand(2, author);
+        uint256 f3 = _founderInBand(3, author);
         uint256 id = _buy(buyer, 2, 1, holder);
         // A share price well off 1:1, so the share move has something to round.
         vault.gain(1337e6);
@@ -1488,19 +1578,18 @@ contract OneCoinTest is Test {
         token.claim(id);
         token.fundFounders(3);
 
+        uint256[3] memory founders = [f, f2, f3];
         for (uint256 i = 0; i < 3; i++) {
-            uint256 credited = token.coinOf(f + i).principal;
+            uint256 credited = token.coinOf(founders[i]).principal;
             if (credited == 0) continue;
-            assertGe(token.nav(f + i), credited, "the coin holds at least what it is credited with");
+            assertGe(token.nav(founders[i]), credited, "the coin holds at least what it is credited with");
         }
     }
 
     // ---- treasury ----
 
     function test_WithdrawTreasuryIsBlockedWhileAFounderCoinIsShort() public {
-        _paceFounder(1);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(1, author);
+        uint256 f = _founderInBand(1, author);
         uint256 id = _buy(buyer, 2, 1, holder);
         vault.gain(100e6);
         vm.prank(holder);
@@ -1513,9 +1602,7 @@ contract OneCoinTest is Test {
     }
 
     function test_WithdrawTreasuryPaysTheAuthorOnceTheFoundersAreFull() public {
-        _paceFounder(1);
-        vm.prank(author);
-        uint256 f = token.mintFounder{value: FEE}(1, author);
+        uint256 f = _founderInBand(1, author);
         uint256 id = _buy(buyer, 2, 1, holder);
         vault.gain(2000e6);
         vm.prank(holder);
@@ -1600,15 +1687,12 @@ contract OneCoinTest is Test {
     // ---- the invariant that matters ----
 
     function test_NothingButClaimAndRedeemMovesACoinsShares() public {
-        // Far enough into the series that the two founder mints below are past their pacing gate.
-        _paceFounder(2);
         // A victim coin nobody in this test ever claims or redeems.
         uint256 victim = _buy(buyer, 2, 1, holder);
         _reveal(_lastRequest(), 1);
         vault.gain(200e6);
 
-        vm.prank(author);
-        token.mintFounder{value: FEE}(1, author);
+        _founderInBand(2, author);
 
         uint256 sharesBefore = token.sharesOf(victim);
         uint256 principalBefore = token.coinOf(victim).principal;
@@ -1620,8 +1704,7 @@ contract OneCoinTest is Test {
         _buy(stranger, 0, 2, stranger);
         uint256 openRid = _lastRequest();
 
-        vm.prank(author);
-        token.mintFounder{value: FEE}(1, author);
+        _founderInBand(3, author);
 
         _reveal(openRid, 77);
 
@@ -1947,11 +2030,11 @@ contract OneCoinRealRendererTest is Test {
     }
 
     function test_AFounderCoinDrawsBeforeItIsFunded() public {
-        // Founder coin one waits for two hundred coins of the series, so walk the id counter
-        // there rather than mint them. Slot 13 is `nextId`, slot 14 is `minted`.
-        vm.store(address(token), bytes32(uint256(13)), bytes32(uint256(201)));
+        // Founder coin one lives in band one, coins 1 to 200 of the series, so walk the id
+        // counter into that band rather than mint them. Slot 14 is `nextId`, slot 15 `minted`.
         vm.store(address(token), bytes32(uint256(14)), bytes32(uint256(200)));
-        assertEq(token.nextId(), 201, "storage layout moved, re-read forge inspect OneCoin storage");
+        vm.store(address(token), bytes32(uint256(15)), bytes32(uint256(199)));
+        assertEq(token.nextId(), 200, "storage layout moved, re-read forge inspect OneCoin storage");
         vm.prank(author);
         uint256 id = token.mintFounder{value: FEE}(1, author);
         uint256[] memory words = new uint256[](1);
