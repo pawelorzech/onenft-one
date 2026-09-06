@@ -6,7 +6,8 @@ Last verified: 2026-09-06 | 2026-09-06
 
 | Contract | Address |
 |---|---|
-| OneCoin (ERC-721), second and live | `0x4Bd8F79bE4862544cbA135b87a139Be0e3004a72` |
+| OneCoin (ERC-721), third and live | `0x7A7dea7489708cc9b50831C364aCf6e95aA13b41` |
+| OneCoin, second, retired (its 40 founder coins were sent to 0x…dEaD; it let the owner move the VRF coordinator) | `0x4Bd8F79bE4862544cbA135b87a139Be0e3004a72` |
 | OneCoin, first, retired (one founder coin, series of 10,000, three classes, band pacing) | `0xF597D7bD4467A501a7634dD53Be63E1c7261bcdB` |
 | CoinRenderer | `0xa5EC64050248350A1116485DF73755B12722A558` |
 | MasterRenderer | `0xF5584197FAbBd23C8858C379cC1eb61A7fa589fE` |
@@ -20,4 +21,4 @@ Third and final test token `0x50879A220753D07b3212aFe56138A0F0fD20c9d0` with the
 
 ## Source drift, stated once
 
-The live token `0x4Bd8…4a72` was deployed from commit `aa62954`, which is the current `contracts/src/OneCoin.sol`. The retired first token `0xF597…bcdB` was deployed two commits earlier and rounds the fee in shares up where the current code rounds down; on the Spark vault a share has 18 decimals, so that is dust.
+The live token `0x7A7d…3b41` was deployed from commit `d04f3c9`, which is the current `contracts/src/OneCoin.sol`: batches of 40, the randomness fee per coin, the callback gas computed per request under a 2,500,000 cap, `setCoordinator` for the coordinator alone. The retired second token `0x4Bd8…4a72` differs by the owner path in `setCoordinator` and batches of 10; the retired first token `0xF597…bcdB` also rounds the fee in shares up where the current code rounds down.
