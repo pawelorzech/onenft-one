@@ -30,6 +30,11 @@ describe("server", () => {
     expect(s.totalSupply).toBe(PREVIEW_SUPPLY);
     expect(s.recent.length).toBe(Math.min(40, PREVIEW_SUPPLY));
     expect((await get("/spec.json")).status).toBe(200);
+    expect(s.maxSupply).toBe(10000);
+    const h = await (await get("/api/holder/0x84Cf6667FdE676a5950730720b67d62B9AB476Df")).json();
+    expect(h.coins).toEqual([]);
+    expect((await get("/api/holder/pawelorzech.eth")).status).toBe(200);
+    expect((await get("/yours")).status).toBe(302);
   });
   test("png cards render", async () => {
     const r = await get("/coin/1.png");

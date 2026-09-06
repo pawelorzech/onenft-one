@@ -37,6 +37,10 @@ export function stateJson() {
     seriesName: roman(1),
     seriesSize: SERIES_SIZE,
     totalSupply: PREVIEW_SUPPLY,
+    /** For the hub, which reads rolls and coins the same way. */
+    maxSupply: SERIES_SIZE,
+    pending: 0,
+    poolLeft: MASTERS_PER_SERIES - mastersFound().size,
     left: SERIES_SIZE - PREVIEW_SUPPLY,
     mastersPerSeries: MASTERS_PER_SERIES,
     mastersFound: mastersFound().size,
@@ -63,4 +67,10 @@ export function specJson() {
     }),
     image: "64 by 64 pixel grid, SVG with one path per colour, drawn on chain",
   };
+}
+
+/** One wallet's coins. Preview: nobody owns anything yet, so the list is empty and says so. */
+export function holderJson(who: string) {
+  const address = /^0x[0-9a-fA-F]{40}$/.test(who) ? who : null;
+  return { site: SITE, address, name: address ? null : who, preview: PREVIEW, coins: [], facts: [], note: PREVIEW ? "Preview: no contract is live, so no wallet holds a coin yet." : null };
 }

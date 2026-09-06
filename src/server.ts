@@ -6,7 +6,7 @@
 import { MASTERS } from "./coin.ts";
 import { PREVIEW_SUPPLY, previewCoin, previewInput, coinOfSeed } from "./preview.ts";
 import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, pad5, bpsPct } from "./site.ts";
-import { coinJson, stateJson, specJson } from "./api.ts";
+import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -59,6 +59,9 @@ function route(url: URL): Response {
   if (path === "/yield") return html(yieldPage());
   if (path === "/how") return html(howPage());
   if (path === "/api/state") return json(stateJson(), 15);
+  if (path === "/yours") return new Response(null, { status: 302, headers: { location: "/coins" } });
+  const holder = path.match(/^\/api\/holder\/(0x[0-9a-fA-F]{40}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.eth)$/i);
+  if (holder) return json(holderJson(holder[1]), 15);
 
   // The newest coin as the site's own image.
   if (path === "/newest.svg" || path === "/newest.png") {
