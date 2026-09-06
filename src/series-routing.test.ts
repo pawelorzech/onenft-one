@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { rpcFixture, TOKEN } from "./test-fixtures/rpc.ts";
 
 test("series URLs and form resolve to global token URLs through the running server", async () => {
-  const { client, state } = rpcFixture(); state.last = 1;
+  const { client, state } = rpcFixture(); state.last = 2; state.burned.add(2);
   const rpc = Bun.serve({ port: 0, async fetch(req) {
     const body = await req.json();
     try { return Response.json({ jsonrpc: "2.0", id: body.id, result: await client.transport.request(body) }); }
@@ -25,5 +25,11 @@ test("series URLs and form resolve to global token URLs through the running serv
     const mints = await (await fetch(base + "/api/mints?after=0&limit=1")).json();
     expect(mints.items.map((c: { id: number }) => c.id)).toEqual([1]);
     expect(mints.namespace).toBe(`8453:${TOKEN}`);
+    expect(mints.head).toBe(2);
+    // The newest mint can be burned; an existing cursor and a bootstrap still use minted history.
+    for (const after of ["latest", "2"]) {
+      const page = await (await fetch(`${base}/api/mints?after=${after}`)).json();
+      expect(page.head).toBe(2); expect(page.nextCursor).toBe(2); expect(page.items).toEqual([]);
+    }
   } finally { proc.kill(); await proc.exited; rpc.stop(true); }
 });

@@ -120,7 +120,10 @@ async function route(url: URL): Promise<Response> {
     if (!chain || status.stale) return json({ error: "chain unavailable" }, 0, 503);
     const snapshot = chain;
     const page = mintPage(snapshot, [...snapshot.coins.keys()], url.searchParams, (id) => coinJson(snapshot.coins.get(id)!, snapshot, undefined, status));
-    return json(page, 0, "error" in page ? 400 : 200);
+    if ("error" in page) return json(page, 0, 400);
+    // Burns remove holdings, not minted ids. Never move an announcer's head backwards.
+    const head = snapshot.nextId - 1;
+    return json({ ...page, head, nextCursor: url.searchParams.get("after") === "latest" ? head : page.nextCursor }, 0);
   }
   if (path === "/api/state") return json(stateJson(chain, await namesFor(chain, chain ? recentOwners(chain) : undefined), status), 15);
 
