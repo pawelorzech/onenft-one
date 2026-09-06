@@ -14,7 +14,7 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 
 /// @title ONE, a coin that holds its own backing
 /// @notice Every coin is one share position in an ERC-4626 USDC vault. A mint pays the
-/// backing, 10, 25 or 50 USDC, and nothing on top; the coin holds the shares that money
+/// backing, 5, 10, 25 or 50 USDC, and nothing on top; the coin holds the shares that money
 /// bought. `claim` pays out the yield the coin has earned, `redeem` burns the coin and
 /// pays out everything it holds. The author takes ten percent of yield and nothing else.
 ///
@@ -25,23 +25,24 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 ///
 /// Twenty five thousand coins make a series, series without end. Fifty slots of every series are
 /// master coins, one of one; the rest are procedural. Which slot a coin lands on comes
-/// from Chainlink VRF v2.5 through a lazy Fisher-Yates urn over the series' ten thousand
+/// from Chainlink VRF v2.5 through a lazy Fisher-Yates urn over the series' twenty five thousand
 /// slots, so exactly fifty masters exist per series and nobody, the author included, can
 /// steer them. A coin is sealed between its mint and the VRF answer; `retry` reopens a
 /// request the coordinator never answered, so no coin can stay sealed forever.
 ///
-/// A coin cannot be redeemed for thirty days after its mint, and not while it is sealed unless
-/// half a year has passed. That second door is for the day Chainlink drops a request: the
-/// coordinator treats it as pending forever and will not release the subscription, so without a
-/// way out that batch's USDC would be stranded. After half a year no answer is on its way and
-/// there is nothing left to steer. The
-/// first rule is what stops a holder from watching Chainlink's answer in the mempool and burning
-/// chosen sealed coins of a batch to push the coins behind them onto a master slot. The second,
-/// with the randomness fee the minter pays in ETH at mint, is what stops a bot from cycling the
-/// same USDC through the urn, keeping the masters, burning the rest and billing the author's VRF
-/// subscription for every round. The fee is per coin, so a batch of forty pays forty times it
-/// and the subscription grows with the volume it has to answer for. Claiming yield stays open at
-/// any time.
+/// Two rules hold a coin in place. A sealed coin cannot be burned, which is what stops a holder
+/// from watching Chainlink's answer in the mempool and burning chosen sealed coins of a batch to
+/// push the coins behind them onto a master slot. And no coin can be burned for thirty days after
+/// its mint, which together with the randomness fee the minter pays in ETH is what stops a bot
+/// from cycling the same USDC through the urn, keeping the masters, burning the rest and billing
+/// the author's VRF subscription for every round. The fee is per coin, so a batch of forty pays
+/// forty times it and the subscription grows with the volume it has to answer for.
+///
+/// The first rule has a door in it: after half a year a sealed coin can be burned anyway. That is
+/// for the day Chainlink drops a request, because the coordinator treats it as pending forever
+/// and will not release the subscription, so without a way out that batch's USDC would be
+/// stranded. By then no answer is on its way and there is nothing left to steer. Claiming yield
+/// is open the whole time, sealed or not.
 ///
 /// A hundred founder coins a series are reserved for the author, free. Their backing is not paid at
 /// mint: the contract fills it from the author's ten percent of yield, oldest founder coin

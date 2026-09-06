@@ -2034,6 +2034,45 @@ contract OneCoinRealRendererTest is Test {
         );
     }
 
+    /// @dev The two shapes the product change created that no committed fixture covers: the five
+    /// dollar class, and a coin number with five digits. This does not check bytes against the
+    /// TypeScript, which is the fixtures' job, but it does prove the token hands the renderer
+    /// these values and gets a real document back for them.
+    function test_TheCheapestClassAndAFiveDigitNumberDrawThroughTheRealRenderer() public {
+        // Slot 13 is `nextId`, slot 14 is `minted`. Walk to the end of series one.
+        vm.store(address(token), bytes32(uint256(13)), bytes32(uint256(24999)));
+        vm.store(address(token), bytes32(uint256(14)), bytes32(uint256(24998)));
+        assertEq(token.nextId(), 24999, "storage layout moved, re-read forge inspect OneCoin storage");
+
+        uint256 id = _buy(0, 2);
+        uint256 rid = vrf.lastRequestId();
+        uint256[] memory words = new uint256[](2);
+        words[0] = (uint256(25) << 64) | uint256(0xC0FFEE);
+        words[1] = (uint256(9000) << 64) | uint256(0xBEEF);
+        vrf.fulfill(rid, words);
+
+        CoinView memory v = token.viewOf(id);
+        assertEq(v.backing, 5, "the five dollar class reaches the renderer");
+        assertEq(v.number, 24999, "and a five digit coin number");
+        assertEq(v.series, 1);
+        assertEq(v.master, 25, "as a master, the widest legend there is");
+        assertGt(bytes(token.tokenURI(id)).length, 1000);
+        assertEq(token.tokenURI(id), coinRenderer.tokenURI(v));
+
+        // The last coin of the series, and the first of the next one.
+        CoinView memory last = token.viewOf(id + 1);
+        assertEq(last.number, 25000, "the last number a series can hold");
+        assertEq(last.series, 1);
+        assertEq(last.backing, 5);
+        assertGt(bytes(token.tokenURI(id + 1)).length, 1000);
+
+        uint256 next = _buy(3, 1);
+        assertEq(token.viewOf(next).number, 1, "series two starts again at one");
+        assertEq(token.viewOf(next).series, 2);
+        assertEq(token.viewOf(next).backing, 50);
+        assertGt(bytes(token.tokenURI(next)).length, 1000);
+    }
+
     function test_AFounderCoinDrawsBeforeItIsFunded() public {
         // The founder reserve is open over the first thousand coins of a series, so nothing has
         // to be walked. Slot 13 is `nextId`, slot 14 is `minted`.

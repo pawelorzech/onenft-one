@@ -31,7 +31,7 @@ contract CoinRendererTest is Test {
     using Strings for uint256;
 
     string private constant FIXTURES = "test/fixtures/coin_cases.json";
-    uint256 private constant CASES = 150;
+    uint256 private constant CASES = 152;
 
     /// Fields in the alphabetical order Foundry emits them in.
     string private constant CASE_TYPE = "FixtureCase("
@@ -100,7 +100,7 @@ contract CoinRendererTest is Test {
     ///
     /// The cases are split into batches so no single test frame holds the decoded
     /// fixture plus every rendered output at once. EVM memory is never reclaimed
-    /// inside a call frame, so a single test over all 150 cases would keep growing.
+    /// inside a call frame, so a single test over all 152 cases would keep growing.
     function checkCases(uint256 from, uint256 to) internal view {
         Case[] memory cases = loadCases();
         for (uint256 i = from; i < to && i < CASES; i++) {
@@ -138,7 +138,7 @@ contract CoinRendererTest is Test {
     function test_MatchesTypeScript_C() public view { checkCases(50, 75); }
     function test_MatchesTypeScript_D() public view { checkCases(75, 100); }
     function test_MatchesTypeScript_E() public view { checkCases(100, 125); }
-    function test_MatchesTypeScript_F() public view { checkCases(125, 150); }
+    function test_MatchesTypeScript_F() public view { checkCases(125, 152); }
 
     /// `tokenURI` for the heaviest fixture must fit inside one eth_call on a public
     /// Base RPC. The heaviest is the one with the largest SVG, which the next test
@@ -180,7 +180,7 @@ contract CoinRendererTest is Test {
 
     function test_TokenUriGasWithinBudget_A() public view { checkTokenUriGas(0, 50); }
     function test_TokenUriGasWithinBudget_B() public view { checkTokenUriGas(50, 100); }
-    function test_TokenUriGasWithinBudget_C() public view { checkTokenUriGas(100, 150); }
+    function test_TokenUriGasWithinBudget_C() public view { checkTokenUriGas(100, 152); }
 
     function heaviestIndex(Case[] memory cases) internal pure returns (uint256 best) {
         uint256 bestLength = 0;

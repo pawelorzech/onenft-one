@@ -46,6 +46,8 @@ cases.push({ ...base, seed: seedAt(2002n), number: 201, backing: 50, founder: tr
 cases.push({ ...base, seed: seedAt(2003n), number: 9999, series: 2, backing: 10, fundedUnits: full(10), lifetimeUnits: 0n, why: "series II" });
 cases.push({ ...base, seed: seedAt(2004n), number: 10000, series: 14, backing: 10, fundedUnits: full(10), lifetimeUnits: 0n, why: "series XIV" });
 cases.push({ ...base, seed: seedAt(2005n), number: 7, backing: 5, fundedUnits: full(5), lifetimeUnits: 0n, why: "backing 5" });
+cases.push({ ...base, seed: seedAt(2006n), number: 25000, series: 3, backing: 5, fundedUnits: full(5), lifetimeUnits: 1234n, yieldBps: 246, why: "five digit number, series III, ring" });
+cases.push({ ...base, seed: seedAt(2007n), number: 24999, backing: 5, master: 25, fundedUnits: full(5), lifetimeUnits: full(5) * 10n, yieldBps: 100000, why: "master Alpha with the ring at the cap" });
 cases.push({ ...base, seed: 0n, number: 123, backing: 25, sealed: true, fundedUnits: full(25), lifetimeUnits: 0n, why: "sealed" });
 cases.push({ ...base, seed: 0n, number: 124, backing: 50, sealed: true, founder: true, yieldBps: 2000, fundedUnits: 0n, lifetimeUnits: 0n, why: "sealed founder with a ring" });
 
