@@ -6,7 +6,7 @@
  * are theirs, and a hostile ENS name cannot break out of an attribute.
  */
 import { test, expect } from "bun:test";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable, eth, ethOf, IMG_Q } from "./site.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, legalPage, onChainChecker, notFound, chainDown, cssVars, contrast, coinRow, usdc, bpsPct, dateOf, redeemable, eth, ethOf, IMG_Q, REPO } from "./site.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
 import { stateJson, holderJson, specJson, coinJson } from "./api.ts";
 import { holderFacts } from "./facts.ts";
@@ -507,5 +507,44 @@ test("muted text keeps 4.5:1 and control edges keep 3:1 on every material", () =
       expect(contrast(muted, bg)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(edge, bg)).toBeGreaterThanOrEqual(3);
     }
+  }
+});
+
+test("terms and privacy stand on their own, quote the risk word for word, and link back", () => {
+  const c = fakeChain();
+  const t = legalPage("terms", c);
+  expect(t).toContain("Terms of use");
+  expect(t).toContain("CC0");
+  // The warning cannot drift: the page carries RISK, not a retelling of it.
+  expect(t).toContain(RISK);
+  expect(t).toContain(`href="https://onenft.click"`);
+  const p = legalPage("privacy", c);
+  expect(p).toContain("No accounts, no cookies");
+  expect(p).toContain("local storage");
+  for (const h of [t, p]) {
+    expect(h).toContain("Last changed");
+    expect(h).toContain(`href="${REPO}/issues"`);
+    expect(h).toContain(`href="/terms"`);
+    expect(h).toContain(`href="/privacy"`);
+  }
+  // Neither page needs a chain, so both render on a server with no contract.
+  expect(legalPage("terms", null)).toContain("Terms of use");
+  expect(legalPage("privacy", null)).toContain("Privacy");
+});
+
+test("the home page points at OnChainChecker next to OpenSea", () => {
+  const before = process.env.CONTRACT_ADDRESS;
+  const beforeChain = process.env.CHAIN_ID;
+  process.env.CONTRACT_ADDRESS = "0x7A7dea7489708cc9b50831C364aCf6e95aA13b41";
+  process.env.CHAIN_ID = "8453";
+  try {
+    const h = homePage(fakeChain(), OK);
+    expect(h).toContain("https://opensea.io/assets/base/0x7A7dea7489708cc9b50831C364aCf6e95aA13b41/1");
+    expect(h).toContain("https://onchainchecker.xyz/collection/base/0x7A7dea7489708cc9b50831C364aCf6e95aA13b41/1");
+    expect(h).toContain("Fully on-chain, 5 of 5 on OnChainChecker");
+    expect(onChainChecker({ chainId: 84532, address: "0xabc" })).toBe("https://onchainchecker.xyz/collection/base-sepolia/0xabc/1");
+  } finally {
+    if (before === undefined) delete process.env.CONTRACT_ADDRESS; else process.env.CONTRACT_ADDRESS = before;
+    if (beforeChain === undefined) delete process.env.CHAIN_ID; else process.env.CHAIN_ID = beforeChain;
   }
 });

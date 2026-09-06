@@ -13,7 +13,7 @@ import { seriesCoinId } from "./series.ts";
 import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, IMG_V, IMG_Q, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
 import { coinOfSeed, placeholderCoin } from "./preview.ts";
 import { coinOf } from "./token.ts";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, legalPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
@@ -114,6 +114,7 @@ async function route(url: URL): Promise<Response> {
   if (path === "/coins") return html(coinsPage(chain, Number(url.searchParams.get("page") ?? 1), status));
   if (path === "/masters") return html(mastersPage(chain, await namesFor(chain), status));
   if (path === "/how") return html(howPage(chain, status));
+  if (path === "/terms" || path === "/privacy") return html(legalPage(path.slice(1) as "terms" | "privacy", chain));
   if (path === "/assets") return html(assetsPage(chain, status));
   if (path === "/yours") return html(yoursPage(chain, status, url.searchParams.get("bad")));
   if (path === "/api/mints") {

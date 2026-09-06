@@ -337,17 +337,24 @@ export function menu(extra: [string, string][] = []): string {
 export function topBar(current?: string): string {
   return `<div class="top">${crumb(current)}<nav aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav></div>`;
 }
-/** The token's OpenSea and Basescan pages, when a contract is configured. */
+/**
+ * The contract's page on OnChainChecker, which read coin 1 as "Fully On-Chain",
+ * 5 of 5, on 2026-09-07. Token 1 stands for the whole collection there.
+ */
+export function onChainChecker(chain: { chainId: number; address: string }): string {
+  return `https://onchainchecker.xyz/collection/${chain.chainId === 8453 ? "base" : "base-sepolia"}/${chain.address}/1`;
+}
+/** The token's OpenSea, OnChainChecker and Basescan pages, when a contract is configured. */
 export function chainLinks(): string {
   const a = process.env.CONTRACT_ADDRESS;
   const id = Number(process.env.CHAIN_ID ?? 0);
   if (!a) return "";
   const os = id === 8453 ? `https://opensea.io/assets/base/${a}/1` : `https://testnets.opensea.io/assets/base_sepolia/${a}/1`;
   const scan = id === 8453 ? `https://basescan.org/address/${a}` : `https://sepolia.basescan.org/address/${a}`;
-  return `<a href="${os}">OpenSea</a><a href="${scan}">Contract</a>`;
+  return `<a href="${os}">OpenSea</a><a href="${onChainChecker({ chainId: id, address: a })}">Fully on-chain, 5 of 5 on OnChainChecker</a><a href="${scan}">Contract</a>`;
 }
 export function footer(): string {
-  return `<footer><nav aria-label="Footer">${menu()}${chainLinks()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. This can lose you money: read <a href="/how#risk">what can go wrong</a> and <a href="/how">how it works</a> before you mint.</span></footer>`;
+  return `<footer><nav aria-label="Footer">${menu()}${chainLinks()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. This can lose you money: read <a href="/how#risk">what can go wrong</a> and <a href="/how">how it works</a> before you mint.</span></footer>`;
 }
 export const STEP_KEYS = `<script>
 (function(){document.addEventListener('keydown',function(e){if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;var t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;var a=e.key==='ArrowLeft'?document.querySelector('a[rel=prev]'):e.key==='ArrowRight'?document.querySelector('a[rel=next]'):null;if(a){e.preventDefault();location.href=a.href}})})();
@@ -1079,4 +1086,39 @@ export function notFound(chain: ChainState | null, what = "No such page."): stri
 export function chainDown(chain: ChainState | null, why = "This page needs the chain, and the chain did not answer. Try again in a minute."): string {
   const body = `<main id="main" class="prose">${topBar("Unavailable")}<h2 class="syne">The chain did not answer</h2><p>${esc(why)}</p><p><a href="/">Back to the coins</a></p>${footer()}</main>`;
   return layout(`The chain did not answer | ${NAME}`, pageColors(chain), body);
+}
+
+// ---- terms and privacy
+
+export const LEGAL_UPDATED = "2026-09-07";
+
+/** /terms and /privacy: short, plain, true. The facts come off the chain, the risk word for word. */
+export function legalPage(kind: "terms" | "privacy", chain: ChainState | null): string {
+  const f = factsOf(chain);
+  const contact = `<p>Questions go to <a href="${REPO}/issues">the repository</a> or to <a href="https://x.com/onenftclick">@onenftclick</a>.</p>`;
+  const terms = `<main id="main" class="prose">${topBar("Terms")}
+<h2 class="syne">Terms of use</h2>
+<p class="small">Last changed ${LEGAL_UPDATED}.</p>
+<p><strong>What this is.</strong> This site shows coins that a contract on the Base chain mints, backs and draws. The site reads the chain and nothing else. It holds no keys, no funds and no account of yours.</p>
+<p><strong>What you sign, you send.</strong> A mint goes from your wallet to the contract. You send the backing, ${backingList(f.backings)} USDC a coin, and USDC needs one approval the first time. You send a Chainlink fee in ETH with the transaction, and the contract passes it to Chainlink for the randomness. You pay the network gas. A transaction that fails still costs gas. Every fee the contract takes is written on this site before you sign.</p>
+<p><strong>The contract is the product.</strong> The contract puts your USDC into a third-party vault on Base that follows the ERC-4626 standard and keeps the shares under your coin. Burn the coin ${f.lockDays} days after its mint and the contract sends back the backing plus the yield it earned, minus ${f.feePct}% of that yield. The art comes from a Chainlink VRF seed and a slot drawn from the urn, so nobody picks it, and ${f.masters} slots of the ${num(f.seriesSize)} in a series are Master Coins. ${f.founders} founder coins a series go to the author, minted inside the first ${num(f.founderWindow)} coins of that series or forfeited, and the contract funds them from the author's share of the yield. The image is not frozen: the ring outside a coin grows with the yield that coin has earned and never shrinks. The contract has no pause on redeem and no key that can move the funds. Read <a href="/how">how it works</a> before you mint.</p>
+<p><strong>No promise of value.</strong> This is not an investment and never will be. ${RISK} Nothing on this site is financial, legal or tax advice. Your taxes and the law where you live are yours to follow.</p>
+<p><strong>No warranty.</strong> The site can go offline, show stale data or have bugs. The coins do not depend on it: the image and the money live in the contract. The site and the code come as they are, with no warranty of any kind.</p>
+<p><strong>Licence.</strong> Images and code are CC0. Use them for anything, with or without credit.</p>
+<p><strong>Changes.</strong> These terms can change. The date at the top says when they last did.</p>
+${contact}
+${footer()}</main>`;
+  const privacy = `<main id="main" class="prose">${topBar("Privacy")}
+<h2 class="syne">Privacy</h2>
+<p class="small">Last changed ${LEGAL_UPDATED}.</p>
+<p><strong>No accounts, no cookies.</strong> This site has no sign-up, sets no cookies and runs no advertising. It does not sell data, because it keeps almost none.</p>
+<p><strong>Server logs.</strong> The host keeps standard access logs: address, path, time, browser string. They exist to keep the site running and to find faults, and they are not kept longer than that needs.</p>
+<p><strong>Page counts.</strong> The site may run Umami, a self-hosted counter that stores no cookie and does not follow you across sites. It counts pages, countries and browsers in aggregate.</p>
+<p><strong>Your wallet.</strong> When you connect a wallet, your browser hands the site your address so the page can show your coins and the mint, claim and burn buttons. While a mint is in flight the page keeps that one transaction in your browser's local storage, filed under the chain, the contract and your address, so a refresh picks it up. It drops the record when the coins open, and you can clear it there. Opening a wallet page sends that address to the server, which looks it up on the chain. Your address and every transaction are public on Base by design; this site does not make them more or less public.</p>
+<p><strong>Third parties.</strong> Fonts load from Google Fonts. Chain reads go through a Base RPC provider. Links lead to OpenSea, Basescan, OnChainChecker and GitHub, which have their own rules.</p>
+<p><strong>Changes.</strong> This page can change. The date at the top says when it last did.</p>
+${contact}
+${footer()}</main>`;
+  const title = kind === "terms" ? "Terms" : "Privacy";
+  return layout(`${title} | ${NAME}`, pageColors(chain), kind === "terms" ? terms : privacy, `/newest.png${IMG_Q}`, `/${kind}`, descOf(chain));
 }
