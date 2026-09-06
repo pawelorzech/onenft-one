@@ -519,7 +519,7 @@ function mintBox(chain: ChainState): string {
 <div class="classes" role="group" aria-label="Backing">${classes}</div>
 <div class="count"><label for="count">How many coins<input class="field" id="count" type="number" inputmode="numeric" min="1" max="${chain.maxBatch}" step="1" value="1"></label><span class="small">Up to ${chain.maxBatch} in one transaction.</span></div>
 <p class="total"><span class="small">Total</span><b class="syne" id="total">${chain.backings[0]}.00 USDC</b></p>
-${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the randomness, paid to Chainlink, one fee per transaction whatever the count. Plus network gas.</p>` : ""}
+${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the randomness, paid to Chainlink, one fee per coin. Plus network gas.</p>` : ""}
 <div class="actions">${soldOut ? `<button class="cta syne" disabled>Series ${roman(chain.series)} is full</button>` : `<button class="cta syne" id="mint-btn">Connect wallet</button>`}<button class="btn" id="mint-check" type="button" hidden>Check status</button></div>
 <p class="msg" id="msg" aria-live="polite"></p>
 <p class="note" role="note">This can lose you money. <a href="/how#risk">Read what can go wrong</a> before you mint.</p>
@@ -633,12 +633,13 @@ async function switchChain(){
   catch(e){if(e&&e.code===4902){await eth.request({method:'wallet_addEthereumChain',params:[{chainId:CFG.chainHex,chainName:CFG.name,rpcUrls:[CFG.rpc],nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18},blockExplorerUrls:[CFG.explorer]}]})}else{throw e}}
 }
 /** The Chainlink fee rides along as value; the contract passes it straight to its subscription. */
-function withFee(tx){var v=BigInt(CFG.vrfFeeWei);if(v>0n)tx.value='0x'+v.toString(16);return tx}
-function feeText(){return BigInt(CFG.vrfFeeWei)>0n?' plus '+CFG.vrfFeeEth+' ETH for the randomness':''}
+function withFee(tx,cnt){var v=BigInt(CFG.vrfFeeWei)*BigInt(cnt||1);if(v>0n)tx.value='0x'+v.toString(16);return tx}
+function ethOfWei(w){var s=w.toString().padStart(19,'0');var i=s.slice(0,-18),f=s.slice(-18).replace(/0+$/,'');return f?i+'.'+f:i}
+function feeText(cnt){var v=BigInt(CFG.vrfFeeWei)*BigInt(cnt||1);return v>0n?' plus '+ethOfWei(v)+' ETH for the randomness':''}
 async function mintNow(need,cnt,klass){
-  say('Confirm the mint in your wallet: '+money(need)+feeText()+' for '+cnt+(cnt===1?' coin.':' coins.'));
+  say('Confirm the mint in your wallet: '+money(need)+feeText(cnt)+' for '+cnt+(cnt===1?' coin.':' coins.'));
   var data=CFG.sel.mint+word(BigInt(klass))+word(BigInt(cnt))+addr(account);
-  var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data})]});
+  var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data},cnt)]});
   keep(account,{stage:'mint',hash:hash});
   show('Mint sent. Waiting for confirmation.',hash);
   return settleLater(hash);
@@ -699,9 +700,9 @@ async function founderRun(){
     account=accs[0];
     await switchChain();
     var cnt=parseInt(fcount&&fcount.value||'1',10);if(!(cnt>=1))cnt=1;if(cnt>CFG.maxBatch)cnt=CFG.maxBatch;
-    say('Confirm the founder mint in your wallet: '+cnt+(cnt===1?' coin':' coins')+feeText()+'.');
+    say('Confirm the founder mint in your wallet: '+cnt+(cnt===1?' coin':' coins')+feeText(cnt)+'.');
     var data=CFG.sel.mintFounder+word(BigInt(cnt))+addr(account);
-    var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data})]});
+    var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data},cnt)]});
     keep(account,{stage:'mint',hash:hash});
     show('Founder mint sent. Waiting for confirmation.',hash);
     await settleLater(hash);
@@ -972,7 +973,7 @@ export function howPage(chain: ChainState | null, status: ChainStatus | null = n
 <p>The contract has no admin over the pool. No pause on redeem, no upgrade, no key that can move the funds. The code holds the money, not a person. The vault is a third party with its own risks; read about it before you mint.</p>
 ${where}
 <h2 class="syne">Randomness nobody steers</h2>
-<p>The seed of each coin comes from Chainlink VRF, a verifiable random number the contract requests at mint and receives a few blocks later. A mint sends ${chain ? eth(chain.vrfFeeWei) : "a small amount of ETH"} with it, one fee per transaction whatever the count, and the contract passes it straight to its Chainlink subscription in the same transaction, so the randomness pays for itself and the contract never sits on ETH. Between the two the coin is sealed: it holds its backing and earns, and its art is missing. The art slot comes from an urn: a series has ${num(f.seriesSize)} slots, ${f.masters} of them Master Coins, and every mint takes one slot out at random from those left. The odds of a Master Coin start at ${f.masters} in ${num(f.seriesSize)} and move with every draw. When a series is full, every one of its ${f.masters} Master Coins is out, no more and no fewer. The author cannot know or choose who gets them. If Chainlink never answers, anyone can ask again from the contract after its retry window, and this site does it for you. If no answer ever comes, the coin can be burned for its backing after ${f.escapeDays} days, so the money is never trapped by a request nobody filled.</p>
+<p>The seed of each coin comes from Chainlink VRF, a verifiable random number the contract requests at mint and receives a few blocks later. A mint sends ${chain ? eth(chain.vrfFeeWei) : "a small amount of ETH"} per coin with it, and the contract passes it straight to its Chainlink subscription in the same transaction, so the randomness pays for itself and the contract never sits on ETH. Between the two the coin is sealed: it holds its backing and earns, and its art is missing. The art slot comes from an urn: a series has ${num(f.seriesSize)} slots, ${f.masters} of them Master Coins, and every mint takes one slot out at random from those left. The odds of a Master Coin start at ${f.masters} in ${num(f.seriesSize)} and move with every draw. When a series is full, every one of its ${f.masters} Master Coins is out, no more and no fewer. The author cannot know or choose who gets them. If Chainlink never answers, anyone can ask again from the contract after its retry window, and this site does it for you. If no answer ever comes, the coin can be burned for its backing after ${f.escapeDays} days, so the money is never trapped by a request nobody filled.</p>
 <h2 class="syne">Series without end</h2>
 <p>A series is ${num(f.seriesSize)} coins. When it fills, the next one opens with its own urn and its own ${f.masters} Master Coins. The Master Coins keep their names across series; each series renders its own version from a new seed.</p>
 <h2 class="syne">Founder coins</h2>

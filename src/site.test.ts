@@ -147,7 +147,9 @@ test("the Chainlink fee is shown and rides along as value on both mints", () => 
   const c = fakeChain();
   const h = homePage(c, OK);
   expect(h).toContain("Plus 0.0003 ETH for the randomness");
-  expect(h).toContain("one fee per transaction whatever the count");
+  expect(h).toContain("one fee per coin");
+  expect(h).toContain("withFee(tx,cnt)");
+  expect(h).toContain("BigInt(CFG.vrfFeeWei)*BigInt(cnt||1)");
   expect(h).toContain('"vrfFeeWei":"300000000000000"');
   expect(h).toContain('"vrfFeeEth":"0.0003"');
   // Both sends go through withFee, so neither can forget the value.
@@ -155,7 +157,7 @@ test("the Chainlink fee is shown and rides along as value on both mints", () => 
   expect(h).toContain("tx.value='0x'+v.toString(16)");
   expect(eth(c.vrfFeeWei)).toBe("0.0003 ETH");
   expect(ethOf(0n)).toBe("0");
-  expect(howPage(c, OK)).toContain("sends 0.0003 ETH with it");
+  expect(howPage(c, OK)).toContain("sends 0.0003 ETH per coin with it");
   // A contract that charges nothing shows no fee line and sends no value.
   const free = homePage(fakeChain({ vrfFeeWei: 0n }), OK);
   expect(free).not.toContain("for the randomness, paid to Chainlink");
