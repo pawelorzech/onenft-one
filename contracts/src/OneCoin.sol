@@ -23,7 +23,7 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// The owner may only point new coins at a new renderer, lock that door for good, and
 /// take the fees the contract has already set aside as treasury shares.
 ///
-/// Ten thousand coins make a series, series without end. Fifty slots of every series are
+/// Twenty five thousand coins make a series, series without end. Fifty slots of every series are
 /// master coins, one of one; the rest are procedural. Which slot a coin lands on comes
 /// from Chainlink VRF v2.5 through a lazy Fisher-Yates urn over the series' ten thousand
 /// slots, so exactly fifty masters exist per series and nobody, the author included, can
@@ -41,13 +41,12 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// same USDC through the urn, keeping the masters, burning the rest and billing the author's VRF
 /// subscription for every round. Claiming yield stays open at any time.
 ///
-/// Fifty founder coins a series are reserved for the author, free. Their backing is not paid at
+/// A hundred founder coins a series are reserved for the author, free. Their backing is not paid at
 /// mint: the contract fills it from the author's ten percent of yield, oldest founder coin
-/// first, until each holds fifty USDC. Nobody else's money ever backs one. They are paced: the
-/// series is cut into fifty bands of two hundred coins, and founder coin k must be minted inside
-/// band k or not at all, so a band that closes empty forfeits that coin for good. The author can
-/// neither hold a free mint back for a moment when the urn is dense with masters nor bring one
-/// forward. Band fifty is coins 9801 to 10000, so the last founder coin can close its series.
+/// first, until each holds fifty USDC. Nobody else's money ever backs one. The reserve is open
+/// only over the first thousand coins of a series, the first four percent, and shuts after that
+/// whatever is left in it. So the author cannot wait to see how the urn is running before taking
+/// the free coins: everyone reads the same odds, and they are read early or not at all.
 ///
 /// The image is drawn by a separate renderer from the coin's own numbers. The renderer
 /// address is pinned per coin at mint, so `setRenderer` touches future coins only, and
@@ -57,12 +56,15 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
 
     // ---- constants ----
 
-    /// @notice Coins per series. Fifty of them are masters, fifty are the founder reserve.
-    uint256 public constant SERIES_SIZE = 10000;
+    /// @notice Coins per series. Fifty of them are masters, a hundred are the founder reserve.
+    uint256 public constant SERIES_SIZE = 25000;
     /// @notice Master recipes per series, drawn as slots 0..49 of the urn.
     uint256 public constant MASTERS = 50;
     /// @notice Founder coins the author may mint per series.
-    uint256 public constant FOUNDERS_PER_SERIES = 50;
+    uint256 public constant FOUNDERS_PER_SERIES = 100;
+    /// @notice Founder coins can only be minted in the first four percent of a series. After
+    /// coin 1000 the reserve is shut, whatever is left of it.
+    uint256 public constant FOUNDER_WINDOW = 1000;
     /// @notice Coins per mint transaction. The cap is the gas of the VRF callback, not policy.
     uint8 public constant MAX_BATCH = 10;
     /// @notice The author's cut of yield, in basis points. Ten percent.
@@ -70,10 +72,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     uint256 public constant BPS = 10000;
     /// @notice `yieldBps` handed to the renderer stops here, at one thousand percent.
     uint32 public constant MAX_YIELD_BPS = 100000;
-    /// @notice The three backing classes in USDC units, six decimals.
+    /// @notice The four backing classes in USDC units, six decimals.
+    uint256 public constant BACKING_5 = 5e6;
     uint256 public constant BACKING_10 = 10e6;
     uint256 public constant BACKING_25 = 25e6;
     uint256 public constant BACKING_50 = 50e6;
+    /// @notice The class a founder coin carries: fifty USDC.
+    uint8 public constant FOUNDER_CLASS = 3;
     /// @notice What a founder coin is filled to from the fees, in USDC units.
     uint256 public constant FOUNDER_BACKING = BACKING_50;
     /// @notice The least `callbackGas` a deploy may ask for. The costly callback is a batch of
@@ -90,9 +95,6 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     uint16 public constant REQUEST_CONFIRMATIONS = 3;
     /// @notice Blocks after a request before anyone may `retry` it. Four hours of Base blocks.
     uint256 public constant RETRY_BLOCKS = 7200;
-    /// @notice A founder coin is only unlocked once the series has this many coins per founder
-    /// coin already minted, so the author's free mints are spread across the series.
-    uint256 public constant FOUNDER_PACE = 200;
     /// @notice How long after its mint a coin has to wait before it can be burned. Claiming the
     /// yield is open the whole time; this stops churn, not withdrawal.
     uint256 public constant REDEEM_LOCK = 30 days;
@@ -170,9 +172,6 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     mapping(uint256 series => Urn) internal _urns;
     /// @notice Founder coins minted so far, per series.
     mapping(uint256 series => uint16 minted) public founderMinted;
-    /// @notice The band the last founder coin of a series took. Bands are spent in order and a
-    /// band that closes without its coin is gone, so this is not the same as `founderMinted`.
-    mapping(uint256 series => uint16 band) public lastFounderBand;
 
     /// @notice The renderer new coins are pinned to.
     address public renderer;
@@ -222,8 +221,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     error SealedCoin(uint256 id);
     error TooSoon(uint256 id, uint256 redeemableAt);
     error FeeTooLow(uint256 want, uint256 got);
-    error FounderTooEarly(uint256 series, uint256 k, uint256 opensAt);
-    error FounderBandMissed(uint256 series, uint256 k, uint256 closedAt);
+    error FounderWindowClosed(uint256 series, uint256 closedAt);
     error VaultFull(uint256 assets, uint256 maxDeposit);
     error VaultIlliquid(uint256 needed, uint256 available);
     error PayoutFailed();
@@ -310,45 +308,38 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         return numberOf(nextId);
     }
 
-    /// @return the band the next founder coin of a series would take, 1..50 while any is left
-    function founderBand(uint256 series) public view returns (uint256) {
-        uint256 position = _nextPosition(series);
-        uint256 band = (position + FOUNDER_PACE - 1) / FOUNDER_PACE;
-        if (band == 0) band = 1;
-        uint256 spent = lastFounderBand[series];
-        return band > spent ? band : uint256(spent) + 1;
-    }
-
-    /// @notice Where the next founder coin of a series can be minted, for the site to show.
-    /// @return k the band, 1..50
-    /// @return opensAt the first position of that band
-    /// @return closesAt the last position of that band
-    /// @return open true when the series is standing inside the band right now
+    /// @notice The state of a series' founder reserve, for the site to show.
+    /// @return minted_ how many founder coins of the series exist
+    /// @return left how many of the hundred are still unclaimed
+    /// @return closesAt the last series position at which one can be minted
+    /// @return open true when the reserve can still be drawn on right now
     function founderWindow(uint256 series)
         external
         view
-        returns (uint256 k, uint256 opensAt, uint256 closesAt, bool open)
+        returns (uint256 minted_, uint256 left, uint256 closesAt, bool open)
     {
-        k = founderBand(series);
-        opensAt = FOUNDER_PACE * (k - 1) + 1;
-        closesAt = FOUNDER_PACE * k;
+        minted_ = founderMinted[series];
+        left = FOUNDERS_PER_SERIES - minted_;
+        closesAt = FOUNDER_WINDOW;
         uint256 position = _nextPosition(series);
-        open = k <= FOUNDERS_PER_SERIES && position >= opensAt && position <= closesAt;
+        open = left > 0 && position > 0 && position <= FOUNDER_WINDOW;
     }
 
     /// @return the backing of a class in USDC units, six decimals
     function backingOf(uint8 backingClass) public pure returns (uint256) {
-        if (backingClass == 0) return BACKING_10;
-        if (backingClass == 1) return BACKING_25;
-        if (backingClass == 2) return BACKING_50;
+        if (backingClass == 0) return BACKING_5;
+        if (backingClass == 1) return BACKING_10;
+        if (backingClass == 2) return BACKING_25;
+        if (backingClass == 3) return BACKING_50;
         revert BadBackingClass(backingClass);
     }
 
-    /// @return the backing of a class in whole USDC: 10, 25 or 50
+    /// @return the backing of a class in whole USDC: 5, 10, 25 or 50
     function backingDollarsOf(uint8 backingClass) public pure returns (uint8) {
-        if (backingClass == 0) return 10;
-        if (backingClass == 1) return 25;
-        if (backingClass == 2) return 50;
+        if (backingClass == 0) return 5;
+        if (backingClass == 1) return 10;
+        if (backingClass == 2) return 25;
+        if (backingClass == 3) return 50;
         revert BadBackingClass(backingClass);
     }
 
@@ -428,28 +419,16 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (seriesOf(lastId) != series) revert SeriesBoundary(firstId, lastId);
         uint16 already = founderMinted[series];
         if (already + count > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
-        // The series is cut into fifty bands of two hundred coins, and founder coin k has to be
-        // minted inside band k or not at all. A band that closes without its coin is forfeited,
-        // which is why the band comes from where the series has reached and not from how many
-        // founder coins exist. The author cannot hold a free mint back for a moment when the urn
-        // is dense with masters, and cannot bring one forward either.
-        uint256 k = founderBand(series);
-        if (k + count - 1 > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
-        for (uint256 i = 0; i < count; i++) {
-            uint256 band = k + i;
-            uint256 position = numberOf(firstId + i);
-            uint256 opensAt = FOUNDER_PACE * (band - 1) + 1;
-            if (position < opensAt) revert FounderTooEarly(series, band, opensAt);
-            uint256 closesAt = FOUNDER_PACE * band;
-            if (position > closesAt) revert FounderBandMissed(series, band, closesAt);
-        }
-        lastFounderBand[series] = uint16(k + count - 1);
+        // The reserve is open only at the start of a series. Checking the last coin of the batch
+        // covers the whole of it, since positions run in order. After that the reserve is shut
+        // for good, so the author cannot wait to see how the urn is running before taking the
+        // free coins: everyone reads the same odds and they are read early or not at all.
+        if (numberOf(lastId) > FOUNDER_WINDOW) revert FounderWindowClosed(series, FOUNDER_WINDOW);
         founderMinted[series] = already + count;
 
         for (uint256 i = 0; i < count; i++) {
             uint256 id = firstId + i;
-            // Class 2 is the 50 USDC class: a founder coin is a fifty once it is full.
-            _newCoin(id, to, 2, true, 0, 0);
+            _newCoin(id, to, FOUNDER_CLASS, true, 0, 0);
             founderIds.push(id);
         }
         nextId = firstId + count;
@@ -459,7 +438,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         for (uint256 i = 0; i < count; i++) {
             uint256 id = firstId + i;
             _coins[id].requestId = requestId;
-            emit Minted(id, to, 2, requestId);
+            emit Minted(id, to, FOUNDER_CLASS, requestId);
         }
     }
 
