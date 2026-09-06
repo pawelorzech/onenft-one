@@ -11,6 +11,9 @@ import {MockRenderer, MockRendererV2, BadMockRenderer} from "./mocks/MockRendere
 import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Deploy} from "../script/Deploy.s.sol";
+import {CoinRenderer} from "../src/CoinRenderer.sol";
+import {MasterRenderer} from "../src/MasterRenderer.sol";
+import {CoinMetadata} from "../src/CoinMetadata.sol";
 
 contract OneCoinTest is Test {
     OneCoin internal token;
@@ -1152,5 +1155,121 @@ contract OneCoinDeployScriptTest is Test {
         assertEq(token.vrfCoordinator(), address(vrf));
         assertEq(token.keyHash(), keyHash);
         assertEq(token.subId(), 4242);
+    }
+}
+
+/// @notice The token against the real renderer, not the mock. Everything else in this file
+/// proves what OneCoin does with a CoinView; this proves the two halves fit: the constructor
+/// accepts the real renderer, the token hands it a view it can draw, and a full tokenURI fits
+/// in one eth_call on a public Base RPC.
+contract OneCoinRealRendererTest is Test {
+    OneCoin internal token;
+    MockUSDC internal usdc;
+    MockVault internal vault;
+    MockVRFCoordinator internal vrf;
+    CoinRenderer internal coinRenderer;
+
+    address internal author = address(0xA07401);
+    address internal buyer = address(0xB0B);
+
+    /// @dev docs/CONTRACTS.md section 1: tokenURI must run inside one eth_call of 50M gas.
+    uint256 internal constant RPC_CALL_BUDGET = 50_000_000;
+
+    function setUp() public {
+        usdc = new MockUSDC();
+        vault = new MockVault(usdc);
+        vrf = new MockVRFCoordinator();
+        coinRenderer = new CoinRenderer(address(new MasterRenderer()), address(new CoinMetadata()));
+        token = new OneCoin(
+            "ONE", "ONE", author, address(usdc), address(vault), address(coinRenderer), address(vrf), bytes32(0), 1
+        );
+    }
+
+    function _buy(uint8 class, uint8 count) internal returns (uint256 firstId) {
+        uint256 total = token.backingOf(class) * count;
+        usdc.mint(buyer, total);
+        vm.startPrank(buyer);
+        usdc.approve(address(token), total);
+        firstId = token.mint(class, count, buyer);
+        vm.stopPrank();
+    }
+
+    function test_TheConstructorAcceptsTheRealRenderer() public view {
+        assertEq(token.renderer(), address(coinRenderer));
+        assertEq(coinRenderer.masterCount(), token.MASTERS());
+        assertEq(coinRenderer.masterName(0), "Genesis");
+        assertEq(coinRenderer.masterName(49), "Halcyon");
+    }
+
+    function test_ASealedCoinDrawsThroughTheRealRenderer() public {
+        uint256 id = _buy(1, 1);
+        string memory uri = token.tokenURI(id);
+        assertGt(bytes(uri).length, 1000, "a real document came back");
+        assertEq(uri, coinRenderer.tokenURI(token.viewOf(id)), "the token passed the view it reports");
+    }
+
+    function test_TheWorstMasterDrawsThroughTheTokenInsideTheRpcBudget() public {
+        // Master 25 is Alpha. Fixture case 103 is that master and it is the most expensive of
+        // the 149 cases the renderer is tested against, so this is the worst drawing the token
+        // can be asked for. On a fresh urn the top bits of the word pick the slot directly.
+        uint256 id = _buy(2, 1);
+        uint256[] memory words = new uint256[](1);
+        words[0] = (uint256(25) << 64) | uint256(210566752294031767);
+        vrf.fulfill(vrf.lastRequestId(), words);
+        assertEq(token.slotOf(id), 25);
+        assertEq(token.viewOf(id).master, 25);
+        assertEq(coinRenderer.masterName(25), "Alpha");
+
+        uint256 g = gasleft();
+        string memory flat = token.tokenURI(id);
+        uint256 flatGas = g - gasleft();
+
+        // Again with the yield ring at full, which is the one thing the token adds to a
+        // drawing that a fixture of a fresh coin does not carry.
+        vault.gain(600e6);
+        assertEq(token.viewOf(id).yieldBps, token.MAX_YIELD_BPS());
+        g = gasleft();
+        string memory ringed = token.tokenURI(id);
+        uint256 ringedGas = g - gasleft();
+
+        console.log("tokenURI, master Alpha, no ring  ", flatGas);
+        console.log("tokenURI, master Alpha, full ring", ringedGas);
+        assertLt(flatGas, RPC_CALL_BUDGET, "one eth_call on a public Base RPC covers it");
+        assertLt(ringedGas, RPC_CALL_BUDGET, "and covers it with the ring lit too");
+        assertGt(bytes(flat).length, 1000);
+        assertTrue(keccak256(bytes(flat)) != keccak256(bytes(ringed)), "the ring changed the drawing");
+        assertEq(ringed, coinRenderer.tokenURI(token.viewOf(id)), "the token passed the view it reports");
+    }
+
+    function test_AProceduralCoinDrawsAndItsYieldRingFollowsTheVault() public {
+        uint256 id = _buy(2, 1);
+        uint256[] memory words = new uint256[](1);
+        words[0] = (uint256(5000) << 64) | uint256(0x1234);
+        vrf.fulfill(vrf.lastRequestId(), words);
+        assertGe(token.slotOf(id), token.MASTERS());
+        assertEq(token.viewOf(id).master, 255);
+
+        string memory flat = token.tokenURI(id);
+        vault.gain(25e6);
+        assertApproxEqAbs(token.viewOf(id).yieldBps, 5000, 2, "fifty percent reaches the renderer");
+        assertTrue(
+            keccak256(bytes(flat)) != keccak256(bytes(token.tokenURI(id))),
+            "the yield ring changed the document"
+        );
+    }
+
+    function test_AFounderCoinDrawsBeforeItIsFunded() public {
+        vm.prank(author);
+        uint256 id = token.mintFounder(1, author);
+        uint256[] memory words = new uint256[](1);
+        words[0] = (uint256(1) << 64) | uint256(7);
+        vrf.fulfill(vrf.lastRequestId(), words);
+
+        CoinView memory v = token.viewOf(id);
+        assertTrue(v.founder);
+        assertEq(v.fundedUnits, 0, "no backing yet");
+        assertEq(v.backing, 50);
+        assertEq(v.yieldBps, 0);
+        assertGt(bytes(token.tokenURI(id)).length, 1000);
     }
 }
