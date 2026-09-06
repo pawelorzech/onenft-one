@@ -25,6 +25,10 @@ describe("coin", () => {
       expect(c.svg).not.toContain("NaN");
       expect(c.svg).not.toContain("undefined");
     }
+    for (let i = 0; i < 50; i++) {
+      const c = renderCoin({ ...base, seed: 99n, master: i, yieldBps: 9000 });
+      expect(c.svg.replace(/1\.5/g, "")).not.toMatch(/\d\.\d/);
+    }
   });
   test("yield levels follow the steps and never shrink", () => {
     expect(yieldLevel(0)).toBe(0);

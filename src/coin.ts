@@ -256,12 +256,23 @@ function pad5(n: number): string {
   return String(n).padStart(5, "0");
 }
 
+/** Angle of copy i of n, integer degrees; Solidity does the same division. */
+export function angle(i: number, n: number): number {
+  return Math.floor((i * 360) / n);
+}
+
+/** The largest count at most n * k that divides 360 and is a multiple of n. */
+export function copies(n: number, k: number): number {
+  let m = n * k;
+  while (m > n && 360 % m !== 0) m -= n;
+  return m;
+}
+
 /** N copies of `#m` around the centre. */
 function ring(id: string, n: number, phase = 0): string {
-  const step = 360 / n;
   let s = "";
   for (let i = 0; i < n; i++) {
-    const a = phase + i * step;
+    const a = phase + angle(i, n);
     s += a === 0 ? `<use href="#${id}"/>` : `<use href="#${id}" transform="rotate(${a} 500 500)"/>`;
   }
   return s;
@@ -309,11 +320,11 @@ export function renderCoin(input: CoinInput): Coin {
       break;
     case "Rays":
       defs += `<path id="hr" d="M500 60V88" stroke="${light}" stroke-width="3"/>`;
-      out += ring("hr", n * 4);
+      out += ring("hr", copies(n, 4));
       break;
     case "Dotted":
       defs += `<circle id="hd" cx="500" cy="74" r="4" fill="${light}"/>`;
-      out += ring("hd", n * 6);
+      out += ring("hd", copies(n, 6));
       break;
   }
 
@@ -407,9 +418,8 @@ function yieldRing(level: number, light: string, accent: string, doubled: boolea
   // From level 6 on, tick marks around the outside.
   if (level >= 6) {
     const ticks = 12 * (level - 5);
-    const step = 360 / ticks;
     for (let i = 0; i < ticks; i++) {
-      const a = i * step;
+      const a = angle(i, ticks);
       s += `<path d="M500 ${498 - 414 - level * 6 - 8}V${498 - 414 - level * 6}" stroke="${light}" stroke-width="2" transform="rotate(${a} 500 500)"/>`;
     }
   }
@@ -425,10 +435,10 @@ function fieldPattern(d: Design, n: number, ink: string, dark: string): string {
       // Guilloché: rotated ellipses.
       const rx = 200 + d.fieldA * 8;
       const ry = 60 + d.fieldB * 6;
-      const copies = n * (dens + 1);
+      const count = copies(n, dens + 1);
       s += `<g stroke-width="1.5">`;
-      for (let i = 0; i < copies; i++) {
-        s += `<ellipse cx="500" cy="500" rx="${rx}" ry="${ry}" transform="rotate(${(i * 360) / copies} 500 500)"/>`;
+      for (let i = 0; i < count; i++) {
+        s += `<ellipse cx="500" cy="500" rx="${rx}" ry="${ry}" transform="rotate(${angle(i, count)} 500 500)"/>`;
       }
       s += `</g>`;
       if (dens >= 2) {
@@ -437,11 +447,11 @@ function fieldPattern(d: Design, n: number, ink: string, dark: string): string {
       break;
     }
     case "Radial": {
-      const lines = n * (4 + dens * 2);
+      const lines = copies(n, 4 + dens * 2);
       const inner = 150 + d.fieldA * 4;
       s += `<g stroke-width="${dens >= 2 ? 1 : 2}">`;
       for (let i = 0; i < lines; i++) {
-        const a = (i * 360) / lines;
+        const a = angle(i, lines);
         const len = i % 2 === 0 ? 360 : 300 + d.fieldB * 3;
         s += `<path d="M500 ${500 - inner}V${500 - len}" transform="rotate(${a} 500 500)"/>`;
       }
@@ -460,10 +470,10 @@ function fieldPattern(d: Design, n: number, ink: string, dark: string): string {
     case "Crystalline": {
       // A chord across the coin, copied around: a star lattice.
       const y = 170 + d.fieldA * 10;
-      const copies = n * (dens + 2);
+      const count = copies(n, dens + 2);
       s += `<g stroke-width="1.5">`;
-      for (let i = 0; i < copies; i++) {
-        s += `<path d="M140 ${y}H860" transform="rotate(${(i * 360) / copies} 500 500)"/>`;
+      for (let i = 0; i < count; i++) {
+        s += `<path d="M140 ${y}H860" transform="rotate(${angle(i, count)} 500 500)"/>`;
       }
       s += `</g>`;
       break;
@@ -479,7 +489,7 @@ function fieldPattern(d: Design, n: number, ink: string, dark: string): string {
           const y = 200 + i * 40;
           g += `<path d="M140 ${y}Q260 ${y - amp} 380 ${y}T620 ${y}T860 ${y}"/>`;
         }
-        s += `<g transform="rotate(${(k * 360) / n} 500 500)">${g}</g>`;
+        s += `<g transform="rotate(${angle(k, n)} 500 500)">${g}</g>`;
       }
       s += `</g>`;
       break;
@@ -502,9 +512,9 @@ function rimPattern(d: Design, n: number, light: string, dark: string, ground: s
       s += `<circle cx="500" cy="500" r="${R - 18}" fill="none" stroke="${dark}" stroke-width="16" stroke-dasharray="3 5"/>`;
       break;
     case "Beaded": {
-      const beads = n * 8;
+      const beads = copies(n, 8);
       for (let i = 0; i < beads; i++) {
-        s += `<circle cx="500" cy="118" r="6" fill="${light}" transform="rotate(${(i * 360) / beads} 500 500)"/>`;
+        s += `<circle cx="500" cy="118" r="6" fill="${light}" transform="rotate(${angle(i, beads)} 500 500)"/>`;
       }
       break;
     }
@@ -512,9 +522,9 @@ function rimPattern(d: Design, n: number, light: string, dark: string, ground: s
       s += `<circle cx="500" cy="500" r="${R - 18}" fill="none" stroke="${dark}" stroke-width="14" stroke-dasharray="70 18"/>`;
       break;
     case "Toothed": {
-      const teeth = n * 6;
+      const teeth = copies(n, 6);
       for (let i = 0; i < teeth; i++) {
-        s += `<path d="M490 104L500 130L510 104Z" fill="${dark}" transform="rotate(${(i * 360) / teeth} 500 500)"/>`;
+        s += `<path d="M490 104L500 130L510 104Z" fill="${dark}" transform="rotate(${angle(i, teeth)} 500 500)"/>`;
       }
       break;
     }
@@ -605,9 +615,8 @@ function glyphShape(d: Design, n: number, ink: string, accent: string, shift: nu
   const defs = `<g id="gl" fill="${fill}" stroke="${stroke}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">${motif}</g>`;
   const mirror = glyph === "Sigil" || glyph === "Rune";
   let s = `<defs>${defs}</defs>`;
-  const step = 360 / n;
   for (let i = 0; i < n; i++) {
-    const a = i * step;
+    const a = angle(i, n);
     s += `<use href="#gl" transform="rotate(${a} ${cx} 500)"/>`;
     if (mirror) s += `<use href="#gl" transform="rotate(${a} ${cx} 500) matrix(-1 0 0 1 ${cx * 2} 0)"/>`;
   }

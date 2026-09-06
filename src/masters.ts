@@ -5,7 +5,7 @@
  * Everything here is integer and rotate-only, like coin.ts.
  */
 import type { CoinInput, Design } from "./coin.ts";
-import { yieldOrbits } from "./coin.ts";
+import { yieldOrbits, angle } from "./coin.ts";
 
 export type MasterMode =
   | "void" | "eclipse" | "singularity" | "mobius" | "prism" | "supernova"
@@ -36,7 +36,7 @@ export const MASTERS: readonly Master[] = [
   M("Singularity",  "singularity", "Iron",      "#0d0d10", "#6f7276", "#c8cbcf", "#2f3134", "#1c1d1f", "#ffffff", 9, 0),
   M("Möbius",       "mobius",      "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#2f7fd6", 6, 0),
   M("Prism",        "prism",       "Ivory",     "#ece8df", "#f6f2e8", "#ffffff", "#9a8b6a", "#5b5040", "#c8323c", 6, 0),
-  M("Supernova",    "supernova",   "Amber",     "#0d0d10", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 48, 0),
+  M("Supernova",    "supernova",   "Amber",     "#0d0d10", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 40, 0),
   M("Black Sun",    "blacksun",    "Obsidian",  "#ece8df", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#f0b429", 24, 0),
   M("The Mirror",   "mirror",      "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#ffffff", 0, 0),
   M("Zero",         "zero",        "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#c8323c", 0, 0),
@@ -48,7 +48,7 @@ export const MASTERS: readonly Master[] = [
   M("Umbra",        "eclipse",     "Iron",      "#0d0d10", "#a6a9ad", "#e0e2e4", "#2f3134", "#1c1d1f", "#c8323c", 120, 1),
   M("Nadir",        "void",        "Cobalt",    "#0d0d10", "#0e1630", "#3956a3", "#070b18", "#8ea4dd", "#ffffff", 3, 1),
   M("Zenith",       "supernova",   "Gold",      "#ece8df", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 36, 1),
-  M("Halcyon",      "mobius",      "Rose",      "#ece8df", "#d69aa8", "#f3d2d9", "#7a4552", "#4d2a33", "#2f7fd6", 8, 1),
+  M("Halcyon",      "mobius",      "Rose",      "#ece8df", "#d69aa8", "#f3d2d9", "#7a4552", "#4d2a33", "#2f7fd6", 6, 1),
   M("Meridian",     "mirror",      "Copper",    "#0d0d10", "#b8734a", "#e8b58e", "#5f3620", "#3b2114", "#ffffff", 1, 0),
   M("Corona",       "blacksun",    "Gold",      "#0d0d10", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 36, 1),
   M("Penumbra",     "eclipse",     "Obsidian",  "#ece8df", "#3a3742", "#8a8494", "#0a090c", "#050507", "#f0b429", 160, 0),
@@ -58,7 +58,7 @@ export const MASTERS: readonly Master[] = [
   M("Tessellation", "lattice",     "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#ffffff", 8, 1),
   M("Monolith",     "zero",        "Obsidian",  "#ece8df", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#ffffff", 1, 0),
   M("Oracle",       "infinite",    "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#8a5cd6", 4, 1),
-  M("Relic",        "fracture",    "Bronze",    "#ece8df", "#9a7a48", "#d6b986", "#4d3a1e", "#2f2412", "#ffffff", 7, 1),
+  M("Relic",        "fracture",    "Bronze",    "#ece8df", "#9a7a48", "#d6b986", "#4d3a1e", "#2f2412", "#ffffff", 6, 1),
   M("Ember",        "spiral",      "Copper",    "#0d0d10", "#b8734a", "#e8b58e", "#5f3620", "#3b2114", "#f0b429", 10, 1),
   M("Glacier",      "prism",       "Silver",    "#ece8df", "#eef0f3", "#ffffff", "#5f6670", "#3a3f47", "#2f7fd6", 12, 0),
   M("Tide",         "mobius",      "Verdigris", "#0d0d10", "#4f8f8b", "#9dcfca", "#25504d", "#153331", "#ffffff", 5, 0),
@@ -71,7 +71,7 @@ export const MASTERS: readonly Master[] = [
   M("Lodestar",     "supernova",   "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#f0b429", 24, 1),
   M("Helix",        "spiral",      "Cobalt",    "#ece8df", "#3956a3", "#8ea4dd", "#1c2b58", "#101a38", "#ffffff", 18, 0),
   M("Abyss",        "void",        "Verdigris", "#0d0d10", "#0c1a1a", "#25504d", "#050a0a", "#9dcfca", "#4fd1a0", 4, 0),
-  M("Radiance",     "blacksun",    "Amber",     "#ece8df", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 48, 0),
+  M("Radiance",     "blacksun",    "Amber",     "#ece8df", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 40, 0),
   M("Obelisk",      "zero",        "Iron",      "#0d0d10", "#6f7276", "#a6a9ad", "#2f3134", "#1c1d1f", "#ffffff", 2, 1),
   M("Chalice",      "genesis",     "Rose",      "#0d0d10", "#d69aa8", "#f3d2d9", "#7a4552", "#4d2a33", "#f0b429", 8, 2),
   M("Keystone",     "fracture",    "Iron",      "#0d0d10", "#6f7276", "#a6a9ad", "#2f3134", "#1c1d1f", "#c8323c", 3, 0),
@@ -89,7 +89,7 @@ const R = 400;
 function rot(inner: string, n: number, cx = 500): string {
   let s = "";
   for (let i = 0; i < n; i++) {
-    const a = (i * 360) / n;
+    const a = angle(i, n);
     s += a === 0 ? inner : `<g transform="rotate(${a} ${cx} 500)">${inner}</g>`;
   }
   return s;
@@ -167,7 +167,7 @@ export function renderMasterBody(m: Master, input: CoinInput, design: Design, le
       const n = m.a;
       for (let i = 0; i < n; i++) {
         const c = colors[i % colors.length];
-        s += `<path d="M500 500L500 140L${500 + 170} 190Z" fill="${c}" fill-opacity=".85" transform="rotate(${(i * 360) / n} 500 500)"/>`;
+        s += `<path d="M500 500L500 140L${500 + 170} 190Z" fill="${c}" fill-opacity=".85" transform="rotate(${angle(i, n)} 500 500)"/>`;
       }
       s += `<circle cx="500" cy="500" r="70" fill="${m.body}" stroke="${m.dark}" stroke-width="3"/>`;
       break;
@@ -177,7 +177,7 @@ export function renderMasterBody(m: Master, input: CoinInput, design: Design, le
       s += `<g stroke="${m.light}" stroke-width="2">`;
       for (let i = 0; i < rays; i++) {
         const len = i % 3 === 0 ? 330 : i % 3 === 1 ? 250 : 190;
-        s += `<path d="M500 ${500 - 60}V${500 - len}" transform="rotate(${(i * 360) / rays} 500 500)"/>`;
+        s += `<path d="M500 ${500 - 60}V${500 - len}" transform="rotate(${angle(i, rays)} 500 500)"/>`;
       }
       s += `</g>`;
       s += `<circle cx="500" cy="500" r="${m.b ? 90 : 60}" fill="${m.light}"/><circle cx="500" cy="500" r="${m.b ? 50 : 30}" fill="${m.accent}"/>`;
@@ -203,7 +203,7 @@ export function renderMasterBody(m: Master, input: CoinInput, design: Design, le
       const shards = m.a;
       s += `<g stroke="${m.bg}" stroke-width="${m.b ? 14 : 10}" stroke-linejoin="round" fill="none">`;
       for (let i = 0; i < shards; i++) {
-        s += `<path d="M500 500L${560 + i * 20} 300L${520 + i * 30} 110" transform="rotate(${(i * 360) / shards} 500 500)"/>`;
+        s += `<path d="M500 500L${560 + i * 20} 300L${520 + i * 30} 110" transform="rotate(${angle(i, shards)} 500 500)"/>`;
       }
       s += `</g>`;
       s += `<circle cx="500" cy="500" r="40" fill="${m.accent}"/>`;
@@ -213,19 +213,19 @@ export function renderMasterBody(m: Master, input: CoinInput, design: Design, le
       const n = m.a;
       s += `<g fill="none" stroke="${m.dark}" stroke-width="1.5">`;
       for (let i = 0; i < n * 2; i++) {
-        s += `<ellipse cx="500" cy="500" rx="320" ry="90" transform="rotate(${(i * 180) / n} 500 500)"/>`;
+        s += `<ellipse cx="500" cy="500" rx="320" ry="90" transform="rotate(${Math.floor((i * 180) / n)} 500 500)"/>`;
       }
       s += `</g>`;
       s += `<g fill="${m.light}">${rot(`<circle cx="500" cy="118" r="7"/>`, n * 4)}</g>`;
       s += `<circle cx="500" cy="500" r="130" fill="${m.body}" stroke="${m.light}" stroke-width="10"/>`;
-      s += `<g fill="${m.accent}">${rot(`<path d="M500 390L520 470L500 500L480 470Z"/>`, m.b * 4)}</g>`;
+      s += `<g fill="${m.accent}">${rot(`<path d="M500 390L520 470L500 500L480 470Z"/>`, m.b * 3)}</g>`;
       break;
     }
     case "infinite": {
       const r = 150;
       s += `<g fill="none" stroke="${m.light}" stroke-width="${m.b ? 12 : 20}">`;
       for (let i = 0; i < m.a; i++) {
-        s += `<g transform="rotate(${(i * 180) / m.a} 500 500)"><circle cx="${500 - r}" cy="500" r="${r}"/><circle cx="${500 + r}" cy="500" r="${r}"/></g>`;
+        s += `<g transform="rotate(${Math.floor((i * 180) / m.a)} 500 500)"><circle cx="${500 - r}" cy="500" r="${r}"/><circle cx="${500 + r}" cy="500" r="${r}"/></g>`;
       }
       s += `</g>`;
       s += `<circle cx="500" cy="500" r="14" fill="${m.accent}"/>`;
