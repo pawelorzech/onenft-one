@@ -1,17 +1,22 @@
 /**
- * The server. Preview mode until a contract exists: every page draws from the
- * simulated series in preview.ts. Routes mirror the sisters so the hub can read
- * /api/state and /api/coin/<n> the same way.
+ * The server. Every page that shows a coin reads the chain through the cache
+ * in contract.ts: the last good state at once, a wait only before the first
+ * read answers. Without CONTRACT_ADDRESS the site is a plain renderer and
+ * every page says so. Routes mirror the sisters so the hub can read
+ * /api/state and /api/holder the same way.
  */
 import { MASTERS } from "./coin.ts";
-import { PREVIEW_SUPPLY, previewCoin, previewInput, coinOfSeed, placeholderCoin } from "./preview.ts";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, pad5, bpsPct } from "./site.ts";
+import { chainState, chainStatus, contractEnabled, readNow, newestCoin, coinsOf, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
+import { coinOfSeed, placeholderCoin } from "./preview.ts";
+import { coinOf } from "./token.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, pad5, bpsPct, type Names } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
 import { goTarget } from "./wallet.ts";
 import { resolveHolder, resolveFailed, ensNames } from "./ens.ts";
-import { isAddress, type Address } from "viem";
+import { startKeeper, keeperInfo } from "./keeper.ts";
+import { isAddress, type Address, type Hex } from "viem";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BOOT_AT = Date.now();
@@ -21,6 +26,7 @@ const svg = (s: string, immutable: boolean) => new Response(s, { headers: { "con
 const png = (b: Uint8Array, immutable: boolean) => new Response(b as Uint8Array<ArrayBuffer>, { headers: { "content-type": "image/png", "cache-control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300", "access-control-allow-origin": "*" } });
 const json = (o: unknown, maxAge = 15, status = 200) => new Response(JSON.stringify(o, null, 1), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": status === 200 && maxAge > 0 ? `public, max-age=${maxAge}` : "no-store", "access-control-allow-origin": "*" } });
 const text = (s: string, status = 200) => new Response(s, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
+const redirect = (to: string, status = 302) => new Response(null, { status, headers: { location: to } });
 
 export function withHeaders(res: Response): Response {
   const h = res.headers;
@@ -45,39 +51,33 @@ export async function handle(req: Request): Promise<Response> {
   }
 }
 
-/** The coin id in a path, when it is one the preview has minted. */
-function idOf(s: string): number | null {
-  const n = Number(s);
-  return Number.isInteger(n) && n >= 1 && n <= PREVIEW_SUPPLY ? n : null;
+/** ENS names for the owners a page will show. Never throws. */
+async function namesFor(chain: ChainState | null, only?: Iterable<string>): Promise<Names> {
+  if (!chain) return new Map();
+  const list = only ? [...only] : [...new Set([...chain.coins.values()].map((c) => c.owner).filter(Boolean) as string[])];
+  return ensNames(list);
 }
-
-const redirect = (to: string, status = 302) => new Response(null, { status, headers: { location: to } });
+/** Owners of the newest coins, the ones the home page lists. */
+function recentOwners(chain: ChainState, n = 40): string[] {
+  return [...chain.coins.keys()].sort((a, b) => b - a).slice(0, n).map((id) => chain.coins.get(id)!.owner).filter(Boolean) as string[];
+}
 
 async function route(url: URL): Promise<Response> {
   const path = url.pathname;
-  if (path === "/health") return text(`ok, preview supply ${PREVIEW_SUPPLY}, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);
-  if (path === "/ready") return json({ ok: true, preview: true, totalSupply: PREVIEW_SUPPLY }, 0);
+
+  // ---- everything that needs no chain answers before any chain read
+  if (path === "/health") return text(`ok, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);
+  if (path === "/ready") {
+    const s = chainStatus();
+    const ok = !s.configured || s.known;
+    return json({ ok, chain: s, keeper: keeperInfo() }, 0, ok ? 200 : 503);
+  }
   if (path === "/spec.json") return json(specJson(), 3600);
-  if (path === "/") return html(homePage());
-  if (path === "/coins") return html(coinsPage(Number(url.searchParams.get("page") ?? 1)));
-  if (path === "/masters") return html(mastersPage());
-  if (path === "/traits") return html(traitsPage());
-  if (path === "/yield") return html(yieldPage());
-  if (path === "/how") return html(howPage());
-  if (path === "/api/state") return json(stateJson(), 15);
-  if (path === "/assets") return html(assetsPage());
-  if (path === "/yours") return html(yoursPage(url.searchParams.get("bad")));
+  if (path === "/traits") return html(traitsPage(await chainState()));
+  if (path === "/yield") return html(yieldPage(await chainState()));
   if (path === "/go") return redirect(goTarget(url.searchParams.get("who")));
 
-  // The newest coin as the site's own image.
-  if (path === "/newest.svg" || path === "/newest.png") {
-    const c = PREVIEW_SUPPLY < 1 ? placeholderCoin() : previewCoin(PREVIEW_SUPPLY);
-    if (path === "/newest.svg") return svg(c.svg, false);
-    if (PREVIEW_SUPPLY < 1) return png(cardPng("sealed", "ONE", "no coin minted yet", "10,000 coins a series, 50 Master Coins, every coin backed by USDC", c), false);
-    return png(cardPng(`newest${PREVIEW_SUPPLY}`, "ONE", `newest coin #${pad5(PREVIEW_SUPPLY)}`, `${c.traits.material}, ${c.traits.field}, ${c.traits.glyph}`, c), false);
-  }
-
-  // A master with a sample seed, for the ones not found yet.
+  // A master with a sample seed, for the ones nobody has drawn yet.
   const master = path.match(/^\/master\/(\d{1,2})\.svg$/);
   if (master) {
     const i = Number(master[1]);
@@ -85,50 +85,87 @@ async function route(url: URL): Promise<Response> {
     return svg(coinOfSeed(0x5eedn * BigInt(i + 1), 0, i).svg, true);
   }
 
-  // Any seed, for previews and the yield demo: /preview/<16 hex>.svg?yield=<bps>
+  // Any seed, for the yield demo and for anyone porting the generator: /preview/<16 hex>.svg?yield=<bps>
   const pre = path.match(/^\/preview\/([0-9a-fA-F]{1,16})\.svg$/);
   if (pre) {
     const y = Math.min(100000, Math.max(0, Number(url.searchParams.get("yield") ?? 0) || 0));
     return svg(coinOfSeed(BigInt("0x" + pre[1]), y).svg, true);
   }
 
-  const m = path.match(/^\/(api\/)?coin\/(\d{1,5})(\.svg|\.png|-1024\.png)?$/);
+  // ---- from here on pages show chain state
+  const chain = await chainState();
+  const status = chainStatus();
+
+  if (path === "/") return html(homePage(chain, status, await namesFor(chain, chain ? recentOwners(chain) : undefined)));
+  if (path === "/coins") return html(coinsPage(chain, Number(url.searchParams.get("page") ?? 1), status));
+  if (path === "/masters") return html(mastersPage(chain, await namesFor(chain), status));
+  if (path === "/how") return html(howPage(chain, status));
+  if (path === "/assets") return html(assetsPage(chain, status));
+  if (path === "/yours") return html(yoursPage(chain, status, url.searchParams.get("bad")));
+  if (path === "/api/state") return json(stateJson(chain, await namesFor(chain, chain ? recentOwners(chain) : undefined), status), 15);
+
+  // The newest coin as the site's own image, or the sealed stand-in.
+  if (path === "/newest.svg" || path === "/newest.png") {
+    const newest = chain ? newestCoin(chain) : null;
+    const c = newest ? coinOf(newest) : placeholderCoin();
+    if (path === "/newest.svg") return svg(c.svg, false);
+    if (!newest) return png(cardPng("sealed", "ONE", "no coin minted yet", "10,000 coins a series, 50 Master Coins, every coin backed by USDC", c), false);
+    return png(cardPng(`newest${newest.id}-${newest.yieldBps}-${newest.sealed ? 1 : 0}`, "ONE", `newest coin #${pad5(newest.id)}`, newest.sealed ? "sealed, waiting for the seed" : `${c.traits.material}, ${c.traits.field}, ${c.traits.glyph}`, c), false);
+  }
+
+  const m = path.match(/^\/(api\/)?coin\/(\d{1,7})(\.svg|\.png|-1024\.png)?$/);
   if (m) {
-    const n = idOf(m[2]);
-    if (n === null) return m[1] ? json({ error: "no such coin", totalSupply: PREVIEW_SUPPLY }, 0, 404) : html(notFound(`Coin ${m[2]} does not exist yet. ${PREVIEW_SUPPLY} coins are minted.`), 404);
-    const c = previewCoin(n);
-    const inp = previewInput(n);
-    if (m[1]) return json(coinJson(n));
+    const id = Number(m[2]);
+    if (!contractEnabled()) return m[1] ? json({ error: "no contract configured" }, 0, 404) : html(notFound(chain, "No contract is configured on this server, so no coin exists."), 404);
+    const c = chain?.coins.get(id);
+    if (!c) {
+      // Unknown here. That is "no such coin" only when the chain answered and the id is past the last mint.
+      const unread = !chain || status.stale || (id >= 1 && id < chain.nextId);
+      if (unread) return m[1] ? json({ error: "the chain did not answer for this coin", chain: status }, 0, 503) : html(chainDown(chain, `Coin ${pad5(id)} could not be read from the chain. Try again in a minute.`), 503);
+      return m[1] ? json({ error: "no such coin", minted: chain!.minted }, 0, 404) : html(notFound(chain, `Coin ${pad5(id)} does not exist. ${chain!.nextId - 1} coins are minted.`), 404);
+    }
+    const coin = coinOf(c);
+    if (m[1]) return json(coinJson(c, chain!, await namesFor(chain, c.owner ? [c.owner] : []), status), c.sealed ? 0 : 15);
     if (m[3] === ".svg") {
       const y = url.searchParams.get("yield");
-      if (y !== null) {
+      if (y !== null && !c.sealed) {
         const bps = Math.min(100000, Math.max(0, Number(y) || 0));
-        return svg(coinOfSeed(inp.seed, bps, inp.master).svg, true);
+        return svg(coinOfSeed(c.seed, bps, c.master).svg, true);
       }
-      return svg(c.svg, false);
+      return svg(coin.svg, false);
     }
-    if (m[3] === ".png") return png(cardPng(`coin${n}-${inp.yieldBps}`, `#${pad5(n)}`, c.masterName ? `Master Coin ${c.masterName}` : "coin", `${inp.backing} USDC, yield ${bpsPct(inp.yieldBps)}, ${c.traits.material}`, c), false);
-    if (m[3] === "-1024.png") return png(squarePng(`coin${n}-${inp.yieldBps}`, c), false);
-    return html(coinPage(n));
+    const key = `coin${id}-${c.yieldBps}-${c.sealed ? 1 : 0}`;
+    if (m[3] === ".png") return png(cardPng(key, `#${pad5(id)}`, c.sealed ? "sealed coin" : coin.masterName ? `Master Coin ${coin.masterName}` : "coin", `${c.backing} USDC, yield ${bpsPct(c.yieldBps)}${c.sealed ? "" : `, ${coin.traits.material}`}`, coin), false);
+    if (m[3] === "-1024.png") return png(squarePng(key, coin), false);
+    return html(coinPage(chain!, c, await namesFor(chain, c.owner ? [c.owner] : []), status));
   }
 
   const holder = path.match(/^\/(api\/holder\/)?(0x[0-9a-fA-F]{40}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.eth)$/i);
   if (holder) {
+    if (!contractEnabled()) return holder[1] ? json({ error: "no contract configured" }, 0, 404) : html(notFound(chain, "No contract is configured on this server, so no wallet holds a coin."), 404);
+    if (!chain) return holder[1] ? json({ error: "the chain did not answer", chain: status }, 0, 503) : html(chainDown(chain), 503);
     const who = await resolveHolder(holder[2]);
     if (!who || !isAddress(who)) {
       const failed = resolveFailed(holder[2]);
       if (holder[1]) return json({ error: failed ? "ENS did not answer" : "no such name" }, 0, failed ? 503 : 404);
-      return html(notFound(failed ? "ENS did not answer. Try the name again in a minute, or use the address." : `No wallet answers to ${holder[2]}.`), failed ? 503 : 404);
+      return html(failed ? chainDown(chain, "ENS did not answer. Try the name again in a minute, or use the address.") : notFound(chain, `No wallet answers to ${holder[2]}.`), failed ? 503 : 404);
     }
-    if (holder[1]) return json(holderJson(who), 15);
     const names = await ensNames([who]);
-    return html(holderPage(who as Address, holder[2], names.get(who.toLowerCase()) ?? null));
+    if (holder[1]) return json(holderJson(who, chain, names, status), 15);
+    return html(holderPage(chain, who as Address, holder[2], names, status));
   }
   if (path.startsWith("/api/")) return json({ error: "no such endpoint" }, 0, 404);
-  return html(notFound(), 404);
+  return html(notFound(chain), 404);
 }
 
 if (import.meta.main) {
+  if (contractEnabled()) {
+    // A dead RPC at boot must not take the site down with it: the images and the static pages need no chain.
+    readNow()
+      .then((st) => console.log(`contract ${CONTRACT} on chain ${CHAIN_ID}, series ${st.series}, ${st.seriesMinted} minted, ${st.pending} sealed, ${st.mastersLeft} masters left, renderer ${st.renderer}`))
+      .catch((e) => console.error("contract state unavailable at boot, serving without it:", (e as Error).message));
+    if (process.env.DEPLOYER_KEY) startKeeper(process.env.DEPLOYER_KEY as Hex);
+  }
   Bun.serve({ port: PORT, fetch: handle });
-  console.log(`one.onenft.click on :${PORT}, preview supply ${PREVIEW_SUPPLY}`);
+  console.log(`one.onenft.click on :${PORT}${contractEnabled() ? "" : ", no contract configured"}`);
 }

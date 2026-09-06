@@ -11,12 +11,18 @@ ONE: coins backed by USDC on Base, one series of 10,000 at a time, 50 Master Coi
 
 ## Site
 
-- `src/server.ts` serves the site; without a contract it runs in **preview mode** from `src/preview.ts` (a simulated series: seeds from `PREVIEW_SALT`, `PREVIEW_SUPPLY` coins minted, the same lazy Fisher-Yates urn, yield growing with age so the ring shows). Pages: `/`, `/coins`, `/coin/<n>`, `/masters`, `/traits`, `/yield`, `/how`; images `/coin/<n>.svg|.png|-1024.png`, `/coin/<n>.svg?yield=<bps>`, `/master/<i>.svg`, `/preview/<hex seed>.svg`; JSON `/api/state`, `/api/coin/<n>`, `/spec.json`. Copy in `src/site.ts`; PNG cards in `src/image.ts` with the fonts in `assets/fonts/`.
-- The page wears the newest coin: `--bg` is its ground, `--fg` its light or ink, pulled to 4.5:1 contrast.
+- `src/server.ts` serves the site and reads the chain through `src/contract.ts`. **Env: `CONTRACT_ADDRESS`, `CHAIN_ID` (8453 or 84532), `BASE_RPC_URL`**; optional `DEPLOYER_KEY` (arms the keeper), `UMAMI_URL` + `UMAMI_WEBSITE_ID`, `PORT`, and the read tuning `CHAIN_TTL_MS`, `CHAIN_DEADLINE_MS`, `RPC_TIMEOUT_MS`, `STALE_AFTER_MS`, `COINS_TTL_MS`, `KEEPER_EVERY_MS`. With no `CONTRACT_ADDRESS` the site is a plain renderer: the empty state, no mint box, no wallet pages.
+- The cache is the sisters' rule (`src/swr.ts`): a page never waits on the RPC when a last good state exists, a refresh runs behind it shared by every request, failures back off, and a read is all or nothing. Every refresh re-reads the newest 120 coins and every sealed coin; all coins once every ten minutes. RPC URLs are scrubbed from every error.
+- Pages: `/`, `/coins`, `/coin/<id>`, `/masters`, `/traits`, `/yield`, `/how`, `/assets`, `/yours`, `/<address or name.eth>`. Images `/coin/<id>.svg|.png|-1024.png`, `/coin/<id>.svg?yield=<bps>`, `/master/<i>.svg`, `/preview/<hex seed>.svg`, `/newest.svg|.png`. JSON `/api/state`, `/api/coin/<id>`, `/api/holder/<who>`, `/spec.json`, plus `/health` and `/ready` (503 when a contract is configured and the chain never answered).
+- The browser does the writing: the mint box on `/` connects, switches the wallet to the right chain, reads the USDC balance and allowance, approves the exact total when it must, sends `mint(class, count, wallet)`, reads the new ids from the `Minted` logs and polls `/api/coin/<id>` until each coin opens, keeping the transaction in `localStorage` per chain, contract and wallet so a refresh picks it up. The author's wallet also sees `mintFounder`. Claim and redeem sit on `/coin/<id>` and on a wallet's page, shown only to the wallet that owns the coin. Calldata is built from selectors in `src/contract.ts`; there is no ABI encoder in the page.
+- `src/keeper.ts` runs when `DEPLOYER_KEY` is set: every five minutes it takes the sealed coins' request ids and calls `retry(requestId)` on any request past `RETRY_BLOCKS`. Nothing else is signed on the server.
+- `src/abi.test.ts` checks the hand-written ABI against `contracts/out/OneCoin.sol/OneCoin.json`. **When the contract changes, that test is the first thing to look at**; it skips when the artifact is missing.
+- Copy in `src/site.ts`; inner pages in `src/pages.ts`; PNG cards in `src/image.ts` with the fonts in `assets/fonts/`.
+- The page wears the newest coin that has its art. A sealed coin is grey by design, so wearing it would drain the site of colour after every mint.
 
 ## Commands
 
-- `bun test` (15 tests) · `PORT=3000 bun run src/server.ts` · `bun run scripts/sim.ts [n]` simulates n mints with the urn and prints trait odds, proves every SVG distinct · `bun run scripts/sheet.ts coins|masters|yield|one` renders review sheets to `out/`.
+- `bun test` (47 tests) · `PORT=3000 bun run src/server.ts` (add `CONTRACT_ADDRESS`, `CHAIN_ID`, `BASE_RPC_URL` to read a chain) · `bun run tsc -p tsconfig.json` · `bun run scripts/sim.ts [n]` simulates n mints with the urn and prints trait odds, proves every SVG distinct · `bun run scripts/sheet.ts coins|masters|yield|one` renders review sheets to `out/`.
 - Never npm/npx, never Python for project code.
 
 ## Frontend Theme

@@ -1,55 +1,102 @@
-/** JSON for other people's code and the hub. Everything here is derived; nothing is stored. */
+/** JSON for other people's code and the hub. Everything here is derived from the chain; nothing is stored. */
 import { YIELD_STEPS, MASTERS, fingerprint, roman } from "./coin.ts";
-import { SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, PREVIEW_SUPPLY, previewCoin, previewInput, mastersFound } from "./preview.ts";
-import { SITE, FEE_PCT, PREVIEW, TABLES, attributesOf, oneInOf, rarestOf } from "./site.ts";
+import {
+  SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, FEE_PCT,
+  coinIds, coinsOf, explorer, openseaCoin, type ChainState, type ChainStatus, type CoinRecord,
+} from "./contract.ts";
+import { SITE, TABLES, oneInOf, rarestOf, isAuthor, redeemable, type Names, NO_NAMES } from "./site.ts";
+import { coinOf, metaOf, attrsOf } from "./token.ts";
+import { holderFacts } from "./facts.ts";
 
-export function coinJson(n: number) {
-  const c = previewCoin(n);
-  const inp = previewInput(n);
+/** How old the data in an answer is. `known` false means no chain read ever succeeded, so counts are null, never zero. */
+export function chainBlock(status: ChainStatus | null) {
+  if (!status?.configured) return { configured: false, known: false, stale: false, readAt: null, ageSeconds: null, error: null };
+  return { configured: true, known: status.known, stale: status.stale, readAt: status.readAt === null ? null : new Date(status.readAt).toISOString(), ageSeconds: status.ageSeconds, error: status.error };
+}
+
+const units = (u: bigint) => u.toString();
+
+export function coinJson(c: CoinRecord, chain: ChainState, names: Names = NO_NAMES, status: ChainStatus | null = null) {
+  const coin = coinOf(c);
+  const { json } = metaOf(c);
+  const meta = JSON.parse(json) as { name: string; description: string };
   return {
-    id: n,
-    series: inp.series,
-    seed: inp.seed.toString(),
-    fingerprint: fingerprint(inp.seed),
-    master: c.masterName || null,
-    founder: inp.founder,
-    backingUsdc: inp.backing,
-    yieldBps: inp.yieldBps,
-    yieldLevel: c.yieldLevel,
-    attributes: attributesOf(c, inp),
-    rarity: c.masterName ? null : { oneIn: oneInOf(c.traits), rarest: rarestOf(c.traits) },
-    image: `https://${SITE}/coin/${n}.svg`,
-    png: `https://${SITE}/coin/${n}-1024.png`,
-    card: `https://${SITE}/coin/${n}.png`,
-    url: `https://${SITE}/coin/${n}`,
-    preview: PREVIEW,
+    id: c.id,
+    series: c.series,
+    number: c.number,
+    name: meta.name,
+    description: meta.description,
+    sealed: c.sealed,
+    seed: c.sealed ? null : c.seed.toString(),
+    fingerprint: c.sealed ? null : fingerprint(c.seed),
+    slot: c.slot,
+    master: coin.masterName || null,
+    founder: c.founder,
+    backingUsdc: c.backing,
+    /** USDC units, six decimals, as strings: JSON numbers cannot hold them safely. */
+    fundedUnits: units(c.principal),
+    navUnits: units(c.nav),
+    profitUnits: units(c.profit),
+    claimedUnits: units(c.claimed),
+    lifetimeUnits: units(c.lifetime),
+    yieldBps: c.yieldBps,
+    yieldLevel: coin.yieldLevel,
+    /** Unix seconds. A coin can be burned from `redeemableAt`, and never while it is sealed. */
+    mintedAt: c.mintedAt,
+    redeemableAt: c.redeemableAt,
+    redeemable: redeemable(c),
+    attributes: attrsOf(c),
+    rarity: c.sealed || coin.masterName ? null : { oneIn: oneInOf(coin.traits), rarest: rarestOf(coin.traits) },
+    owner: c.owner ?? null,
+    ownerName: c.owner ? names.get(c.owner.toLowerCase()) ?? null : null,
+    /** The current holder is the author's wallet. */
+    treasury: isAuthor(chain, c.owner),
+    palette: coin.palette,
+    image: `https://${SITE}/coin/${c.id}.svg`,
+    png: `https://${SITE}/coin/${c.id}-1024.png`,
+    card: `https://${SITE}/coin/${c.id}.png`,
+    url: `https://${SITE}/coin/${c.id}`,
+    opensea: openseaCoin(chain.chainId, chain.address, c.id),
+    explorer: `${explorer(chain.chainId)}/nft/${chain.address}/${c.id}`,
+    chain: chainBlock(status),
   };
 }
 
-export function stateJson() {
-  const recent = Array.from({ length: Math.min(40, PREVIEW_SUPPLY) }, (_, i) => PREVIEW_SUPPLY - i).map(coinJson);
+export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, status: ChainStatus | null = null) {
+  const recent = chain ? coinIds(chain).slice(0, 40).map((id) => coinJson(chain.coins.get(id)!, chain, names, status)) : [];
   return {
     site: SITE,
     kind: "coins",
-    preview: PREVIEW,
-    contract: null,
-    series: 1,
-    seriesName: roman(1),
+    contract: chain ? { address: chain.address, chainId: chain.chainId, renderer: chain.renderer, rendererLocked: chain.rendererLocked, author: chain.author, usdc: chain.usdc, vault: chain.vault } : null,
+    series: chain?.series ?? null,
+    seriesName: chain ? roman(chain.series) : null,
     seriesSize: SERIES_SIZE,
-    /** Nothing is minted in preview; the simulated coins are `previewSupply`. */
-    totalSupply: PREVIEW ? 0 : PREVIEW_SUPPLY,
-    previewSupply: PREVIEW ? PREVIEW_SUPPLY : null,
-    /** For the hub, which reads rolls and coins the same way. */
+    /** Coins minted in the current series. Null, not zero, when the chain never answered. */
+    totalSupply: chain?.seriesMinted ?? null,
+    /** Every coin ever minted, all series, burns included. */
+    mintedEver: chain?.minted ?? null,
+    /** Coins that still exist: minted minus burned. */
+    live: chain?.coins.size ?? null,
+    /** Coins minted and still waiting for their seed from Chainlink VRF. */
+    pending: chain?.pending ?? null,
     maxSupply: SERIES_SIZE,
-    pending: 0,
-    poolLeft: PREVIEW ? MASTERS_PER_SERIES : MASTERS_PER_SERIES - mastersFound().size,
-    left: PREVIEW ? SERIES_SIZE : SERIES_SIZE - PREVIEW_SUPPLY,
+    left: chain ? SERIES_SIZE - chain.seriesMinted : null,
+    /** Master Coin slots nobody has drawn in this series. The hub reads this as the 1/1 pool. */
+    poolLeft: chain?.mastersLeft ?? null,
+    urnLeft: chain?.urnLeft ?? null,
     mastersPerSeries: MASTERS_PER_SERIES,
-    mastersFound: PREVIEW ? 0 : mastersFound().size,
+    mastersLeft: chain?.mastersLeft ?? null,
+    mastersFound: chain ? MASTERS_PER_SERIES - chain.mastersLeft : null,
     founderPerSeries: FOUNDER_PER_SERIES,
-    backings: BACKINGS,
+    founderMinted: chain?.founderMinted ?? null,
+    foundersFunded: chain?.foundersFunded ?? null,
+    treasuryAssetsUnits: chain ? units(chain.treasuryAssets) : null,
+    maxBatch: chain?.maxBatch ?? null,
+    redeemLockSeconds: chain?.redeemLock ?? null,
+    backings: chain?.backings ?? [...BACKINGS],
     feePercentOfYield: FEE_PCT,
     yieldSteps: YIELD_STEPS,
+    chain: chainBlock(status),
     recent,
   };
 }
@@ -60,7 +107,7 @@ export function specJson() {
     seriesSize: SERIES_SIZE,
     mastersPerSeries: MASTERS_PER_SERIES,
     masters: MASTERS.map((m) => ({ name: m.name, mode: m.mode, material: m.material })),
-    backings: BACKINGS,
+    backings: [...BACKINGS],
     feePercentOfYield: FEE_PCT,
     yieldSteps: YIELD_STEPS,
     traits: TABLES.map((tb) => {
@@ -71,8 +118,17 @@ export function specJson() {
   };
 }
 
-/** One wallet's coins. Preview: nobody owns anything yet, so the list is empty and says so. */
-export function holderJson(who: string) {
-  const address = /^0x[0-9a-fA-F]{40}$/.test(who) ? who : null;
-  return { site: SITE, address, name: address ? null : who, preview: PREVIEW, coins: [], facts: [], note: PREVIEW ? "Preview: no contract is live, so no wallet holds a coin yet." : null };
+/** One wallet's coins, with the sums the hub shows above them. */
+export function holderJson(who: string, chain: ChainState, names: Names = NO_NAMES, status: ChainStatus | null = null) {
+  const mine = coinsOf(chain, who);
+  return {
+    site: SITE,
+    address: who,
+    name: names.get(who.toLowerCase()) ?? null,
+    treasury: isAuthor(chain, who),
+    count: mine.length,
+    chain: chainBlock(status),
+    facts: holderFacts(who, chain),
+    coins: mine.map((c) => coinJson(c, chain, names, status)),
+  };
 }

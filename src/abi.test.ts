@@ -1,0 +1,48 @@
+/**
+ * The site's hand-written ABI against the compiled contract. Every function
+ * and event the site calls must exist with the same argument and return types,
+ * or a page reads garbage from a live chain and nobody finds out until then.
+ * The test skips when the artifact is missing, so it needs no Foundry run to
+ * pass; `cd contracts && forge build` puts it there.
+ */
+import { test, expect } from "bun:test";
+import { ABI, SELECTORS, MINTED_TOPIC } from "./contract.ts";
+import { encodeEventTopics, toFunctionSelector, type AbiFunction, type AbiEvent } from "viem";
+
+const ARTIFACT = new URL("../contracts/out/OneCoin.sol/OneCoin.json", import.meta.url).pathname;
+
+const sig = (a: AbiFunction | AbiEvent) => `${a.name}(${a.inputs.map((i) => i.type).join(",")})`;
+const rets = (a: AbiFunction) => a.outputs.map((o) => o.type).join(",");
+const tuple = (a: AbiFunction) => (((a.outputs[0] ?? {}) as { components?: { name?: string; type: string }[] }).components ?? []).map((c) => `${c.name}:${c.type}`).join(",");
+
+test("the site's ABI matches the compiled OneCoin", async () => {
+  const file = Bun.file(ARTIFACT);
+  if (!(await file.exists())) return;
+  const built = ((await file.json()) as { abi: (AbiFunction | AbiEvent)[] }).abi;
+  const byName = new Map(built.map((a) => [`${a.type}:${sig(a)}`, a]));
+  let checked = 0;
+  for (const item of ABI) {
+    if (item.type !== "function" && item.type !== "event") continue;
+    const found = byName.get(`${item.type}:${sig(item as AbiFunction)}`);
+    expect(`${item.type} ${sig(item as AbiFunction)}`).toBe(found ? `${item.type} ${sig(item as AbiFunction)}` : "missing from the contract");
+    if (item.type === "function") {
+      expect(rets(item as AbiFunction)).toBe(rets(found as AbiFunction));
+      if (rets(item as AbiFunction) === "tuple") expect(tuple(item as AbiFunction)).toBe(tuple(found as AbiFunction));
+    } else {
+      expect((item as AbiEvent).inputs.map((i) => Boolean(i.indexed))).toEqual((found as AbiEvent).inputs.map((i) => Boolean(i.indexed)));
+    }
+    checked++;
+  }
+  expect(checked).toBeGreaterThan(25);
+});
+
+test("the selectors and the Minted topic the browser uses come from the same ABI", () => {
+  expect(MINTED_TOPIC).toBe(encodeEventTopics({ abi: ABI, eventName: "Minted" })[0]!);
+  expect(SELECTORS.mint).toBe(toFunctionSelector("mint(uint8,uint8,address)"));
+  expect(SELECTORS.mintFounder).toBe(toFunctionSelector("mintFounder(uint8,address)"));
+  expect(SELECTORS.claim).toBe(toFunctionSelector("claim(uint256)"));
+  expect(SELECTORS.redeem).toBe(toFunctionSelector("redeem(uint256)"));
+  expect(SELECTORS.approve).toBe("0x095ea7b3");
+  expect(SELECTORS.allowance).toBe("0xdd62ed3e");
+  expect(SELECTORS.balanceOf).toBe("0x70a08231");
+});
