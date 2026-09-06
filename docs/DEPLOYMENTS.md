@@ -6,7 +6,8 @@ Last verified: 2026-09-06 | 2026-09-06
 
 | Contract | Address |
 |---|---|
-| OneCoin (ERC-721) | `0xF597D7bD4467A501a7634dD53Be63E1c7261bcdB` |
+| OneCoin (ERC-721), second and live | `0x4Bd8F79bE4862544cbA135b87a139Be0e3004a72` |
+| OneCoin, first, retired (one founder coin, series of 10,000, three classes, band pacing) | `0xF597D7bD4467A501a7634dD53Be63E1c7261bcdB` |
 | CoinRenderer | `0xa5EC64050248350A1116485DF73755B12722A558` |
 | MasterRenderer | `0xF5584197FAbBd23C8858C379cC1eb61A7fa589fE` |
 | CoinMetadata | `0x2D1b3D8686799973F677745651db69005B4AA0db` |
@@ -17,6 +18,6 @@ Backing vault: Spark USDC Vault on Morpho `0x7BfA7C4f149E7415b73bdeDfe609237e29C
 
 Third and final test token `0x50879A220753D07b3212aFe56138A0F0fD20c9d0` with the same renderer chain (`0x551BE07f7be8Db7879032487BCdd63ad0557D1fe`), a MockUSDC (`0x7413Bc3C6bDcdefE4Ef6ADd04E89a4dEc4bDd829`, open `mint(address,uint256)`) and a MockVault (`0xBBa5032b9d563BD5778BfB9F39b58656DF711649`). Two earlier test tokens (`0xD82D789d…`, `0x4d972e58…`) predate the audit fixes and are retired. Site: https://one-test.onenft.click.
 
-## Source drift on mainnet, stated once
+## Source drift, stated once
 
-The mainnet token was deployed from commit `f19510a` plus the band-pacing commit that followed it (the source Sourcify holds). After that deploy the repo changed one thing in `claim` and `redeem`: the fee in shares now rounds down instead of up. On the Spark vault a share has 18 decimals, so the difference is one unit of 10^-18 share per claim or redeem, worth far less than a cent; the mainnet contract keeps the rounding up. Everything else in `contracts/src/OneCoin.sol` matches the deployed bytecode's source.
+The live token `0x4Bd8…4a72` was deployed from commit `aa62954`, which is the current `contracts/src/OneCoin.sol`. The retired first token `0xF597…bcdB` was deployed two commits earlier and rounds the fee in shares up where the current code rounds down; on the Spark vault a share has 18 decimals, so that is dust.
