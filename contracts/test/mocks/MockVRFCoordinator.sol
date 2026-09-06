@@ -21,6 +21,9 @@ contract MockVRFCoordinator is IVRFCoordinatorV2Plus {
     }
 
     uint256 public lastRequestId;
+    /// @notice Native ETH the token has forwarded to each subscription.
+    mapping(uint256 subId => uint256 wei_) public nativeFunded;
+    uint256 public totalNativeFunded;
     /// @notice Set true to make every new request revert, the way a broken subscription would.
     bool public fail;
     mapping(uint256 requestId => Recorded) public requests;
@@ -30,6 +33,11 @@ contract MockVRFCoordinator is IVRFCoordinatorV2Plus {
 
     function setFail(bool v) external {
         fail = v;
+    }
+
+    function fundSubscriptionWithNative(uint256 subId) external payable override {
+        nativeFunded[subId] += msg.value;
+        totalNativeFunded += msg.value;
     }
 
     function requestRandomWords(VRFV2PlusClient.RandomWordsRequest calldata req)

@@ -36,4 +36,28 @@ contract MockVault is ERC4626 {
         SafeERC20.safeTransferFrom(IERC20(asset()), msg.sender, address(this), assets);
         return 0;
     }
+
+    /// @notice How much the vault will take in one deposit. A real vault caps this when it is
+    /// full or paused.
+    uint256 public depositCap = type(uint256).max;
+    /// @notice How many shares one holder may redeem right now, the way a vault with its
+    /// liquidity lent out would.
+    uint256 public redeemCap = type(uint256).max;
+
+    function setDepositCap(uint256 v) external {
+        depositCap = v;
+    }
+
+    function setRedeemCap(uint256 v) external {
+        redeemCap = v;
+    }
+
+    function maxDeposit(address) public view override returns (uint256) {
+        return depositCap;
+    }
+
+    function maxRedeem(address holder) public view override returns (uint256) {
+        uint256 bal = balanceOf(holder);
+        return bal < redeemCap ? bal : redeemCap;
+    }
 }

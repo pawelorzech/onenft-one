@@ -32,8 +32,11 @@ Write one first, for example:
   "coordinator": "0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634",
   "keyHash": "0x… the VRF v2.5 lane, from docs.chain.link",
   "subId": "… the VRF v2.5 subscription id, decimal",
-  "renderer": "0x… the CoinRenderer already on chain"
+  "renderer": "0x… the CoinRenderer already on chain",
+  "vrfFeeWei": "50000000000000"
 }
+vrfFeeWei is the least ETH a mint must send on to the VRF subscription, in decimal wei.
+50000000000000 is 0.00005 ETH, the figure docs/DECISIONS.md records for Base.
 The mainnet coordinator above and the Sepolia one, 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE,
 are what docs/CONTRACTS.md records. Check both against docs.chain.link before you deploy.
 EOF
@@ -48,6 +51,7 @@ export ONE_COORDINATOR=$(need coordinator)
 export ONE_KEY_HASH=$(need keyHash)
 export ONE_SUB_ID=$(need subId)
 export ONE_RENDERER=$(need renderer)
+export ONE_VRF_FEE_WEI=$(need vrfFeeWei)
 export ONE_AUTHOR=$(jq -r .address "$HOME/.config/onenft/author.json")
 
 PK=$(security find-generic-password -a onenft-deployer -s onenft-deployer -w)
@@ -63,6 +67,7 @@ echo "renderer    $ONE_RENDERER"
 echo "coordinator $ONE_COORDINATOR"
 echo "key hash    $ONE_KEY_HASH"
 echo "sub id      $ONE_SUB_ID"
+echo "vrf fee     $ONE_VRF_FEE_WEI wei"
 
 # The vault holds every coin's backing and the renderer is pinned per coin forever, so both
 # have to be code and the vault's asset has to be the USDC above. The constructor checks the
@@ -94,10 +99,10 @@ unset PK
 mkdir -p "$HOME/.config/onenft-one"
 jq -n --arg net "$NET" --argjson chain "$CHAIN" --arg token "$TOKEN" --arg ren "$ONE_RENDERER" \
   --arg usdc "$ONE_USDC" --arg vault "$ONE_VAULT" --arg coord "$ONE_COORDINATOR" \
-  --arg keyHash "$ONE_KEY_HASH" --arg subId "$ONE_SUB_ID" \
+  --arg keyHash "$ONE_KEY_HASH" --arg subId "$ONE_SUB_ID" --arg fee "$ONE_VRF_FEE_WEI" \
   --arg author "$ONE_AUTHOR" --arg deployer "$DEPLOYER" --arg at "$(date -u +%FT%TZ)" \
   '{network:$net,chainId:$chain,OneCoin:$token,CoinRenderer:$ren,usdc:$usdc,vault:$vault,
-    vrfCoordinator:$coord,keyHash:$keyHash,subId:$subId,author:$author,deployer:$deployer,at:$at}' \
+    vrfCoordinator:$coord,keyHash:$keyHash,subId:$subId,vrfFeeWei:$fee,author:$author,deployer:$deployer,at:$at}' \
   > "$HOME/.config/onenft-one/deploy-$NET.json"
 cat "$HOME/.config/onenft-one/deploy-$NET.json"
 

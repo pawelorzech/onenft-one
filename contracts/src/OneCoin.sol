@@ -30,9 +30,20 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// steer them. A coin is sealed between its mint and the VRF answer; `retry` reopens a
 /// request the coordinator never answered, so no coin can stay sealed forever.
 ///
-/// Fifty founder coins a series go to the author for free. Their backing is not paid at
-/// mint: the contract fills it from the author's ten percent of yield, oldest founder
-/// coin first, until each holds fifty USDC. Nobody else's money ever backs one.
+/// A coin cannot be redeemed while it is sealed, and not for thirty days after its mint. The
+/// first rule is what stops a holder from watching Chainlink's answer in the mempool and burning
+/// chosen sealed coins of a batch to push the coins behind them onto a master slot. The second,
+/// with the randomness fee the minter pays in ETH at mint, is what stops a bot from cycling the
+/// same USDC through the urn, keeping the masters, burning the rest and billing the author's VRF
+/// subscription for every round. Claiming yield stays open at any time.
+///
+/// Fifty founder coins a series are reserved for the author, free. Their backing is not paid at
+/// mint: the contract fills it from the author's ten percent of yield, oldest founder coin
+/// first, until each holds fifty USDC. Nobody else's money ever backs one. They are paced:
+/// founder coin k waits until the series already holds two hundred times k coins, so the author
+/// cannot save the free mints for a moment when the urn happens to be dense with masters. The
+/// pacing bites at the end of a series, where coin fifty would need ten thousand coins to exist
+/// before it, so forty nine of the fifty slots can be taken and the last one cannot.
 ///
 /// The image is drawn by a separate renderer from the coin's own numbers. The renderer
 /// address is pinned per coin at mint, so `setRenderer` touches future coins only, and
@@ -67,6 +78,12 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     uint16 public constant REQUEST_CONFIRMATIONS = 3;
     /// @notice Blocks after a request before anyone may `retry` it. Four hours of Base blocks.
     uint256 public constant RETRY_BLOCKS = 7200;
+    /// @notice A founder coin is only unlocked once the series has this many coins per founder
+    /// coin already minted, so the author's free mints are spread across the series.
+    uint256 public constant FOUNDER_PACE = 200;
+    /// @notice How long after its mint a coin has to wait before it can be burned. Claiming the
+    /// yield is open the whole time; this stops churn, not withdrawal.
+    uint256 public constant REDEEM_LOCK = 30 days;
     /// @notice VRF is paid in native ETH from the subscription, not in LINK.
     bool public constant NATIVE_PAYMENT = true;
     /// @notice `slot` of a coin the VRF has not answered for yet.
@@ -86,12 +103,17 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     bytes32 public immutable keyHash;
     /// @notice The VRF v2.5 subscription that pays for the requests.
     uint256 public immutable subId;
+    /// @notice The least ETH a mint must send. The whole value sent goes on to the subscription
+    /// in the same transaction, so the minter pays for their own randomness.
+    uint256 public immutable vrfFeeWei;
 
     // ---- storage ----
 
-    /// @dev One coin. Packs into one slot plus four words: 64 + 16 + 8 + 8 + 160 = 256 bits.
+    /// @dev One coin. The first five fields share a slot, 64 + 40 + 16 + 8 + 8 = 136 bits, and
+    /// the renderer takes the next one.
     struct Coin {
         uint64 seed;
+        uint40 mintedAt;
         uint16 slot;
         uint8 backingClass;
         bool founder;
@@ -172,6 +194,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     error NothingToRetry(uint256 requestId);
     error AlreadyRetried(uint256 requestId);
     error BadDeposit(uint256 assets, uint256 shares);
+    error SealedCoin(uint256 id);
+    error TooSoon(uint256 id, uint256 redeemableAt);
+    error FeeTooLow(uint256 want, uint256 got);
+    error FounderTooEarly(uint256 series, uint256 k, uint256 needed);
+    error VaultFull(uint256 assets, uint256 maxDeposit);
+    error VaultIlliquid(uint256 needed, uint256 available);
+    error PayoutFailed();
     error RetryTooEarly(uint256 requestId, uint256 openAtBlock);
     error RequestIdInUse(uint256 requestId);
     error FoundersUnfunded(uint256 firstUnfunded);
@@ -187,6 +216,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @param coordinator_ the Chainlink VRF v2.5 coordinator on this chain
     /// @param keyHash_ the VRF lane
     /// @param subId_ the VRF subscription this contract is a consumer of
+    /// @param vrfFeeWei_ the least ETH a mint must send on to that subscription
     constructor(
         string memory name_,
         string memory symbol_,
@@ -196,7 +226,8 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         address renderer_,
         address coordinator_,
         bytes32 keyHash_,
-        uint256 subId_
+        uint256 subId_,
+        uint256 vrfFeeWei_
     ) ERC721(name_, symbol_) Ownable(author_) VRFConsumerV2Plus(coordinator_) {
         if (author_ == address(0) || coordinator_ == address(0)) revert BadRecipient();
         address asset = IERC4626(vault_).asset();
@@ -207,6 +238,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         author = author_;
         keyHash = keyHash_;
         subId = subId_;
+        vrfFeeWei = vrfFeeWei_;
         renderer = renderer_;
         emit RendererSet(renderer_);
     }
@@ -257,21 +289,36 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @dev The caller must have approved this contract for `count * backingOf(backingClass)` USDC.
     /// The shares the deposit bought split evenly across the batch, the remainder to the last coin.
     /// @return firstId the id of the first coin of the batch; the batch runs to firstId + count - 1
-    function mint(uint8 backingClass, uint8 count, address to) external nonReentrant returns (uint256 firstId) {
+    function mint(uint8 backingClass, uint8 count, address to)
+        external
+        payable
+        nonReentrant
+        returns (uint256 firstId)
+    {
+        if (msg.value < vrfFeeWei) revert FeeTooLow(vrfFeeWei, msg.value);
         if (count == 0 || count > MAX_BATCH) revert BadCount(count);
         if (to == address(0)) revert BadRecipient();
         uint256 backing = backingOf(backingClass);
         uint256 total = backing * count;
+        uint256 room = VAULT.maxDeposit(address(this));
+        if (total > room) revert VaultFull(total, room);
 
         USDC.safeTransferFrom(msg.sender, address(this), total);
         USDC.forceApprove(address(VAULT), total);
-        uint256 shares = VAULT.deposit(total, address(this));
+        // What the vault says it minted is not evidence. Measure the shares this contract
+        // actually gained, so a vault that reports one number and credits another is caught.
+        uint256 held = VAULT.balanceOf(address(this));
+        VAULT.deposit(total, address(this));
+        uint256 shares = VAULT.balanceOf(address(this)) - held;
         // A vault that quietly takes less than it was approved would leave a dangling
         // allowance, so close it either way.
         USDC.forceApprove(address(VAULT), 0);
         // A deposit that buys fewer shares than there are coins would mint a coin backed by
         // nothing while the money stays with the vault's other holders. Refuse the trade.
         if (shares < count) revert BadDeposit(total, shares);
+        // And the shares have to be worth what was paid, give or take one unit of rounding a
+        // coin. Anything worse is the vault taking a cut this contract did not agree to.
+        if (VAULT.convertToAssets(shares) + count < total) revert BadDeposit(total, shares);
 
         uint256 per = shares / count;
         firstId = nextId;
@@ -295,7 +342,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// from the author's share of yield, through `fundFounders`.
     /// @dev A batch may not cross a series boundary: the founder reserve is counted per series.
     /// @return firstId the id of the first coin of the batch
-    function mintFounder(uint8 count, address to) external onlyOwner nonReentrant returns (uint256 firstId) {
+    function mintFounder(uint8 count, address to)
+        external
+        payable
+        onlyOwner
+        nonReentrant
+        returns (uint256 firstId)
+    {
+        if (msg.value < vrfFeeWei) revert FeeTooLow(vrfFeeWei, msg.value);
         if (count == 0 || count > MAX_BATCH) revert BadCount(count);
         if (to == address(0)) revert BadRecipient();
         firstId = nextId;
@@ -304,6 +358,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (seriesOf(lastId) != series) revert SeriesBoundary(firstId, lastId);
         uint16 already = founderMinted[series];
         if (already + count > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
+        // Founder coin k of a series waits until the series already holds 200 times k coins. A
+        // batch is judged by its last coin. This is what stops the author from saving the free
+        // mints for a moment when the urn happens to be dense with masters; the odds are public,
+        // so everyone reads the same numbers and the author cannot act on them alone.
+        uint256 k = uint256(already) + count;
+        uint256 needed = FOUNDER_PACE * k;
+        uint256 existing = numberOf(firstId) - 1;
+        if (existing < needed) revert FounderTooEarly(series, k, needed);
         founderMinted[series] = already + count;
 
         for (uint256 i = 0; i < count; i++) {
@@ -331,6 +393,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         Coin storage c = _coins[id];
         c.seed = 0;
         c.slot = SEALED_SLOT;
+        c.mintedAt = uint40(block.timestamp);
         c.backingClass = backingClass;
         c.founder = founder;
         c.renderer = renderer;
@@ -343,6 +406,12 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
 
     /// @dev Opens one VRF request for `count` words and records which coins it answers for.
     function _requestWords(uint256 firstId, uint8 count) internal returns (uint256 requestId) {
+        // The minter's ETH goes straight to the subscription that will pay for these words, so
+        // the randomness funds itself and this contract is never left holding ETH. `retry`
+        // sends nothing and is skipped here.
+        if (msg.value > 0) {
+            IVRFCoordinatorV2Plus(vrfCoordinator).fundSubscriptionWithNative{value: msg.value}(subId);
+        }
         requestId = IVRFCoordinatorV2Plus(vrfCoordinator).requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
                 keyHash: keyHash,
@@ -369,15 +438,16 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (r.count == 0) return;
         if (words.length < r.count) return;
         delete requests[requestId];
+        // A batch is answered once, and the whole batch at once. `retry` leaves the request it
+        // replaced open, so a second answer can still arrive for a batch already revealed; the
+        // first coin of the batch decides that for all of them, because it is sealed until the
+        // batch is answered and a sealed coin cannot be redeemed. One read, no loop, and above
+        // all no test on any individual coin: the number of urn draws a batch costs is fixed at
+        // mint and cannot be changed by anything a holder does afterwards.
+        if (_coins[r.firstId].slot != SEALED_SLOT) return;
         for (uint256 i = 0; i < r.count; i++) {
             uint256 id = uint256(r.firstId) + i;
-            // A coin redeemed while sealed is gone; skip it rather than write to nothing.
-            if (_ownerOf(id) == address(0)) continue;
             Coin storage c = _coins[id];
-            // Reveal once, from whichever answer arrives first. `retry` leaves the request it
-            // replaced open on purpose, so this, not the request id, is what stops a second
-            // reveal.
-            if (c.slot != SEALED_SLOT) continue;
             uint64 seed = uint64(words[i]);
             uint16 slot = _draw(seriesOf(id), words[i] >> 64);
             c.seed = seed;
@@ -393,10 +463,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// mempool before it lands, and if a retry could throw away the request that carries it, a
     /// holder who did not like the slot could front-run the fulfilment and draw again. Because
     /// both requests stay live and a coin reveals from whichever answer arrives first, a retry
-    /// can only add a chance of an answer, never discard one. The old request's window restarts
-    /// so nobody can ask the subscription for words every block.
+    /// can only add a chance of an answer, never discard one. The replaced request is marked and
+    /// cannot be retried again, so a batch gains at most one request per window however many
+    /// answers are outstanding.
+    /// Any ETH sent with the call goes on to the subscription, the same way a mint's fee does.
+    /// The mint paid for one answer; if the subscription has since run dry, whoever wants the
+    /// coins open can pay for the next attempt rather than leave the batch sealed for good.
     /// @return newRequestId the id of the fresh request
-    function retry(uint256 requestId) external returns (uint256 newRequestId) {
+    function retry(uint256 requestId) external payable returns (uint256 newRequestId) {
         Request memory r = requests[requestId];
         if (r.count == 0) revert NoSuchRequest(requestId);
         // Only the newest request of a batch may be retried. Without this every open request
@@ -405,21 +479,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         uint256 openAt = uint256(r.blockNumber) + RETRY_BLOCKS;
         if (block.number <= openAt) revert RetryTooEarly(requestId, openAt + 1);
 
-        uint256 sealedLeft = 0;
-        for (uint256 i = 0; i < r.count; i++) {
-            uint256 id = uint256(r.firstId) + i;
-            if (_ownerOf(id) != address(0) && _coins[id].slot == SEALED_SLOT) sealedLeft++;
-        }
-        // Every coin of the request is revealed or gone, so there is nothing left to ask for.
-        if (sealedLeft == 0) revert NothingToRetry(requestId);
+        // A sibling request answered this batch already, so there is nothing left to ask for.
+        if (_coins[r.firstId].slot != SEALED_SLOT) revert NothingToRetry(requestId);
 
         requests[requestId].replaced = true;
         newRequestId = _requestWords(r.firstId, uint8(r.count));
         for (uint256 i = 0; i < r.count; i++) {
-            uint256 id = uint256(r.firstId) + i;
-            if (_ownerOf(id) == address(0)) continue;
-            if (_coins[id].slot != SEALED_SLOT) continue;
-            _coins[id].requestId = newRequestId;
+            _coins[uint256(r.firstId) + i].requestId = newRequestId;
         }
         emit Retried(requestId, newRequestId);
     }
@@ -487,6 +553,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         return bps > MAX_YIELD_BPS ? MAX_YIELD_BPS : uint32(bps);
     }
 
+    /// @dev The same, rounded up and never past the position. Used for the author's fee, so a
+    /// rounding unit always falls to the author and never out of the holder's backing.
+    function _sharesForUp(uint256 shares, uint256 nav_, uint256 assets) internal pure returns (uint256) {
+        if (nav_ == 0) return 0;
+        uint256 s = (shares * assets + nav_ - 1) / nav_;
+        return s > shares ? shares : s;
+    }
+
     /// @dev The shares that stand for `assets` out of a position of `shares` worth `nav_`.
     /// Proportional on purpose: it can never hand out more shares than the position holds,
     /// which `convertToShares` could do on a vault that rounds the other way.
@@ -497,7 +571,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
 
     /// @notice Take the coin's yield without giving up the coin. The author's ten percent stays
     /// behind as treasury shares; the rest leaves the vault straight to the coin's owner.
-    /// @dev Reverts when there is no yield. Pays one founder coin's backing forward on the way out.
+    /// @dev Reverts when there is no yield. Pays one founder coin's backing forward on the way
+    /// out. When the vault cannot free the whole payout the claim takes what it can and books
+    /// only that, so the rest stays in the coin and can be claimed later.
     /// @return paid the USDC the owner received, in units
     function claim(uint256 id) external nonReentrant returns (uint256 paid) {
         address to = _requireAuthorized(id);
@@ -509,14 +585,21 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (gain == 0) revert NothingToClaim(id);
 
         uint256 fee = gain * FEE_BPS / BPS;
-        uint256 feeShares = _sharesFor(shares, nav_, fee);
+        uint256 feeShares = _sharesForUp(shares, nav_, fee);
         uint256 outShares = _sharesFor(shares, nav_, gain - fee);
+        // The vault may not be able to hand it all back today. Take what it can and leave the
+        // rest earning; the holder comes back for it. This is why the payout is capped rather
+        // than reverted: a claim is not a burn and nothing is lost by waiting.
+        uint256 available = VAULT.maxRedeem(address(this));
+        if (outShares > available) outShares = available;
         // A gain too small to be worth a single share would pay nothing while still raising
         // `claimed`, and the same gain could be claimed again and again. Wait for a real one.
         if (outShares == 0) revert NothingToClaim(id);
+        // The fee never eats into what the coin keeps beyond its own share of the gain.
+        if (feeShares + outShares > shares) feeShares = shares - outShares;
+        uint256 feeAssets = VAULT.convertToAssets(feeShares);
 
         c.shares = shares - feeShares - outShares;
-        c.claimed += gain;
         treasuryShares += feeShares;
 
         // Pay the founder queue before the vault is touched, so the only interaction
@@ -527,24 +610,41 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         // The shares were worth something on paper and nothing on withdrawal. Book no yield
         // for a payout that did not happen; the whole call unwinds.
         if (paid == 0) revert NothingToClaim(id);
-        emit Claimed(id, to, paid, fee);
+        // Book what moved, never what the arithmetic hoped for. `lifetime` is a record of money
+        // that changed hands, so it can never claim more than the holder and the author got.
+        // This write follows the redeem because only the redeem knows the number; `nonReentrant`
+        // is what makes that safe.
+        c.claimed += paid + feeAssets;
+        emit Claimed(id, to, paid, feeAssets);
     }
 
     /// @notice Burn the coin and take everything it holds: the backing plus the yield, less the
     /// author's ten percent of the yield. When the vault lost money there is no fee and the
     /// owner gets what is left.
+    /// @dev Only once the coin is revealed and thirty days past its mint. Claiming the yield has
+    /// neither restriction.
     /// @return assets the USDC the owner received, in units
     function redeem(uint256 id) external nonReentrant returns (uint256 assets) {
         address to = _requireAuthorized(id);
         Coin storage c = _coins[id];
+        // A sealed coin stays put. Burning one would take an urn draw out of a batch whose
+        // random words are already public in the mempool, and that is how a holder would steer
+        // the coins behind it onto a master slot.
+        if (c.slot == SEALED_SLOT) revert SealedCoin(id);
+        uint256 ready = uint256(c.mintedAt) + REDEEM_LOCK;
+        if (block.timestamp < ready) revert TooSoon(id, ready);
         uint256 shares = c.shares;
         uint256 nav_ = VAULT.convertToAssets(shares);
         uint256 principal = c.principal;
         uint256 gain = nav_ > principal ? nav_ - principal : 0;
 
         uint256 fee = gain * FEE_BPS / BPS;
-        uint256 feeShares = _sharesFor(shares, nav_, fee);
+        uint256 feeShares = _sharesForUp(shares, nav_, fee);
         uint256 outShares = shares - feeShares;
+        // A burn is one shot, so a vault that cannot pay today must not be allowed to swallow
+        // the coin. The holder keeps it and comes back when the liquidity is there.
+        uint256 available = VAULT.maxRedeem(address(this));
+        if (outShares > available) revert VaultIlliquid(outShares, available);
 
         delete _coins[id];
         _burn(id);
@@ -661,6 +761,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         emit RendererSet(renderer_);
     }
 
+    /// @notice ETH forced into this contract goes to the author. Nothing in the normal flow
+    /// leaves any here: a mint's fee is forwarded to the subscription in the same transaction.
+    /// This touches no coin's shares and no holder's USDC, only ETH that should not exist.
+    function sweep() external {
+        (bool ok,) = author.call{value: address(this).balance}("");
+        if (!ok) revert PayoutFailed();
+    }
+
     /// @notice One way. After this no renderer bug can be fixed, for minting or for metadata.
     function lockRenderer() external onlyOwner {
         rendererLocked = true;
@@ -670,6 +778,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @dev Renouncing would strand the treasury and freeze the renderer while `rendererLocked`
     /// still reads false. `lockRenderer` is the one sanctioned way to freeze.
     function renounceOwnership() public pure override {
+        revert OwnershipIsPermanent();
+    }
+
+    /// @dev `author` is immutable and takes the founder coins. If ownership could move, the owner
+    /// and the author would be two different people and every rule written about "the author"
+    /// would stop meaning one thing.
+    function transferOwnership(address) public pure override {
         revert OwnershipIsPermanent();
     }
 
@@ -690,6 +805,8 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         uint256 principal;
         uint256 claimed;
         uint256 requestId;
+        uint256 mintedAt;
+        uint256 redeemableAt;
         uint256 nav;
         uint256 profit;
         uint256 lifetime;
@@ -715,6 +832,8 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         info.principal = c.principal;
         info.claimed = c.claimed;
         info.requestId = c.requestId;
+        info.mintedAt = c.mintedAt;
+        info.redeemableAt = uint256(c.mintedAt) + REDEEM_LOCK;
         info.nav = n;
         info.profit = p;
         info.lifetime = life;
@@ -760,6 +879,18 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     function seedOf(uint256 id) external view returns (uint64) {
         _requireOwned(id);
         return _coins[id].seed;
+    }
+
+    /// @return the unix time the coin was minted
+    function mintedAt(uint256 id) public view returns (uint256) {
+        _requireOwned(id);
+        return _coins[id].mintedAt;
+    }
+
+    /// @return the first unix time the coin can be burned, thirty days after its mint
+    function redeemableAt(uint256 id) public view returns (uint256) {
+        _requireOwned(id);
+        return uint256(_coins[id].mintedAt) + REDEEM_LOCK;
     }
 
     /// @return the vault shares the coin holds

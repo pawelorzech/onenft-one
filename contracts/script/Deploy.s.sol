@@ -24,9 +24,11 @@ contract Deploy is Script {
         address coordinator = vm.envAddress("ONE_COORDINATOR");
         bytes32 keyHash = vm.envBytes32("ONE_KEY_HASH");
         uint256 subId = vm.envUint("ONE_SUB_ID");
+        uint256 vrfFeeWei = vm.envUint("ONE_VRF_FEE_WEI");
 
         vm.startBroadcast();
-        token = new OneCoin(name_, symbol_, author, usdc, vault, renderer, coordinator, keyHash, subId);
+        token =
+            new OneCoin(name_, symbol_, author, usdc, vault, renderer, coordinator, keyHash, subId, vrfFeeWei);
         vm.stopBroadcast();
 
         console.log("OneCoin", address(token));
