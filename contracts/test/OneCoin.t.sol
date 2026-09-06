@@ -896,8 +896,8 @@ contract OneCoinTest is Test {
         uint256 gain = nav - 50e6;
         uint256 fee = gain * 1000 / 10000;
         uint256 outShares = shares * (gain - fee) / nav;
-        // The fee is a ninth of what the holder got, rounded up, so the odd unit goes to the author.
-        uint256 feeShares = (outShares * 1000 + 8999) / 9000;
+        // The fee is a ninth of what the holder got, rounded down.
+        uint256 feeShares = outShares * 1000 / 9000;
 
         vm.prank(holder);
         uint256 paid = token.claim(id);
@@ -1042,7 +1042,7 @@ contract OneCoinTest is Test {
         uint256 nav = token.nav(id);
         uint256 gain = nav - 50e6;
         uint256 fee = gain * 1000 / 10000;
-        uint256 feeShares = (shares * fee + nav - 1) / nav; // the fee rounds up, to the author
+        uint256 feeShares = shares * fee / nav;
 
         vm.prank(holder);
         uint256 assets = token.redeem(id);
@@ -1304,7 +1304,11 @@ contract OneCoinTest is Test {
         assertGt(paid, 0, "it paid what it could");
         assertLt(paid, wanted, "which is less than the whole gain");
         assertEq(usdc.balanceOf(holder), paid);
-        assertEq(token.coinOf(id).claimed, paid + vault.convertToAssets(token.treasuryShares()), "booked what moved");
+        // The fee is priced when it moves; reading the treasury back after the redeem prices it
+        // against a vault one withdrawal lighter, so the two differ by rounding.
+        assertApproxEqAbs(
+            token.coinOf(id).claimed, paid + vault.convertToAssets(token.treasuryShares()), 2, "booked what moved"
+        );
         assertLt(token.sharesOf(id), sharesBefore);
 
         // The rest is still the holder's and comes out once the vault can free it.
@@ -1415,7 +1419,7 @@ contract OneCoinTest is Test {
         assertGt(paidTotal, 0);
     }
 
-    function test_TheRoundingUnitOnTheFeeFallsToTheAuthor() public {
+    function test_TheAuthorNeverTakesMoreThanATenthOfWhatWasReleased() public {
         uint256 id = _buy(buyer, 2, 1, holder);
         uint256 shares = token.sharesOf(id);
         vault.gain(7_777_777);
@@ -1425,7 +1429,33 @@ contract OneCoinTest is Test {
 
         vm.prank(holder);
         token.claim(id);
-        assertEq(token.treasuryShares(), (outShares * 1000 + 8999) / 9000, "the fee took the rounding unit");
+        uint256 fee = token.treasuryShares();
+        assertEq(fee, outShares * 1000 / 9000, "a ninth of the payout, rounded down");
+        assertLe(fee * 10, outShares + fee, "and never above a tenth of what left the coin");
+    }
+
+    /// @dev Rounding the fee up would make a one share release cost a whole share in fee, which
+    /// is half of it. A vault that hands back a share at a time would turn that into most of the
+    /// yield. Rounding down costs the author dust instead.
+    function test_ADripFeedVaultCannotBeUsedToOverchargeTheHolder() public {
+        uint256 id = _buy(buyer, 2, 1, holder);
+        _reveal(_lastRequest(), 1);
+        vault.gain(20e6);
+        vault.setRedeemCap(1);
+
+        uint256 paidTotal = 0;
+        for (uint256 i = 0; i < 40; i++) {
+            vm.prank(holder);
+            try token.claim(id) returns (uint256 paid) {
+                paidTotal += paid;
+            } catch {
+                break;
+            }
+        }
+        uint256 feeShares = token.treasuryShares();
+        assertEq(feeShares, 0, "a share at a time is never worth a tenth of a share in fee");
+        assertEq(usdc.balanceOf(holder), paidTotal);
+        assertGt(paidTotal, 0, "and the holder still got paid");
     }
 
     // ---- ownership cannot move at all ----

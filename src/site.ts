@@ -13,7 +13,7 @@ import {
 } from "./coin.ts";
 import {
   SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, FEE_PCT, DEFAULT_MAX_BATCH, DEFAULT_REDEEM_LOCK, SELECTORS, MINTED_TOPIC,
-  REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound, founderReady, founderNeeds,
+  REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound,
   type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { coinOf } from "./token.ts";
@@ -74,8 +74,12 @@ export function dateOf(unix: number): string {
 }
 /** A span of seconds in days, for copy about the lock. */
 export const days = (seconds: number) => Math.round(seconds / 86400);
-/** True when the coin may be burned now: it has its art and its lock has run out. */
-export const redeemable = (c: CoinRecord, now = Date.now()) => !c.sealed && now >= c.redeemableAt * 1000;
+/**
+ * True when the coin may be burned now. It needs its art and its thirty days, or, when the seed
+ * never came, the escape date the contract opens for a coin nobody can reveal any more.
+ */
+export const redeemable = (c: CoinRecord, now = Date.now()) =>
+  now >= c.redeemableAt * 1000 && (!c.sealed || now >= c.sealedEscapeAt * 1000);
 /** USDC units with all six decimals, for text that must be exact. */
 export function usdcExact(units: bigint): string {
   return `${units / 1000000n}.${(units % 1000000n).toString().padStart(6, "0")}`;
@@ -517,15 +521,15 @@ ${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the 
 <div id="sealed" hidden><p class="small">Your coins are minted and sealed. The seed arrives from Chainlink VRF a few blocks later, and this page opens them.</p><div class="strip" id="sealed-list"></div></div>
 <p class="small">The price is the backing and nothing on top; the author takes none of it. You pay the Chainlink fee, network gas, and USDC needs one approval the first time. Burning a coin sends the backing plus its yield back, minus ${FEE_PCT}% of the yield, and a coin can be burned ${days(chain.redeemLock)} days after its mint. Read <a href="/how">how it works</a> first.</p>
 ${(() => {
-  const ready = founderReady(chain);
-  const k = chain.founderMinted + 1;
-  const needs = founderNeeds(chain);
-  const pace = ready > 0
-    ? `${ready} ${plural(ready, "coin", "coins")} open now.`
-    : chain.founderMinted >= FOUNDER_PER_SERIES
-      ? `Series ${roman(chain.series)} has all ${FOUNDER_PER_SERIES}.`
-      : `Founder coin ${k} opens after ${num(needs)} coins of series ${roman(chain.series)} are minted; ${num(chain.seriesMinted)} so far.`;
-  return `<div id="founder-box" hidden><hr><h3 class="syne">Mint founder coins</h3><p class="small">This wallet is the author. Founder coins carry no backing at mint; the contract fills them from the fee on yield. The Chainlink fee is the same as any mint. ${chain.founderMinted} of ${FOUNDER_PER_SERIES} minted in series ${roman(chain.series)}, one for every ${num(chain.founderPace)} coins the series holds. ${pace}</p><div class="count"><label for="fcount">How many<input class="field" id="fcount" type="number" inputmode="numeric" min="1" max="${Math.max(1, ready)}" step="1" value="1"${ready > 0 ? "" : " disabled"}></label><button class="btn" id="founder-btn" type="button"${ready > 0 ? "" : " disabled"}>Mint founder coins</button></div></div>`;
+  const w = chain.founder;
+  const done = chain.founderMinted >= FOUNDER_PER_SERIES || w.k > FOUNDER_PER_SERIES;
+  const band = `Founder coin ${w.k} is minted inside its own band, coins ${num(w.opensAt)} to ${num(w.closesAt)} of series ${roman(chain.series)}. A band that closes without its coin is forfeited.`;
+  const where = done
+    ? `Series ${roman(chain.series)} has all ${FOUNDER_PER_SERIES}.`
+    : w.open
+      ? `Open now, until coin ${num(w.closesAt)}. The series is at coin ${num(chain.position)}.`
+      : `Not open. It opens at coin ${num(w.opensAt)}, and the series is at coin ${num(chain.position)}.`;
+  return `<div id="founder-box" hidden><hr><h3 class="syne">Mint a founder coin</h3><p class="small">This wallet is the author. A founder coin carries no backing at mint; the contract fills it from the fee on yield. The Chainlink fee is the same as any mint. ${chain.founderMinted} of ${FOUNDER_PER_SERIES} minted in series ${roman(chain.series)}. ${band} ${where}</p><div class="count"><button class="btn" id="founder-btn" type="button"${w.open && !done ? "" : " disabled data-shut"}>${done ? `No band left in series ${roman(chain.series)}` : w.open ? `Mint founder coin ${w.k}` : `Founder coin ${w.k} opens at coin ${num(w.opensAt)}`}</button></div></div>`;
 })()}
 </section>`;
 }
@@ -553,7 +557,7 @@ var CFG=${cfg};if(!CFG.address)return;
 var btn=document.getElementById('mint-btn');var out=document.getElementById('msg');var check=document.getElementById('mint-check');
 var count=document.getElementById('count');var total=document.getElementById('total');var classes=document.querySelectorAll('.classes button');
 var sealedBox=document.getElementById('sealed');var sealedList=document.getElementById('sealed-list');
-var fbox=document.getElementById('founder-box');var fbtn=document.getElementById('founder-btn');var fcount=document.getElementById('fcount');
+var fbox=document.getElementById('founder-box');var fbtn=document.getElementById('founder-btn');
 var cls=0;var units=BigInt(classes.length?classes[0].getAttribute('data-units'):'0');
 function say(t){if(out)out.textContent=t}
 function link(h){return ' <a href="'+CFG.explorer+'/tx/'+h+'" target="_blank" rel="noopener">View transaction</a>'}
@@ -575,7 +579,7 @@ if(count)count.addEventListener('change',function(){count.value=String(n());pain
 paint();
 
 var locked=false;
-function lock(on){locked=on;classes.forEach(function(b){b.disabled=on});if(count)count.disabled=on;if(btn)btn.disabled=on;if(fbtn)fbtn.disabled=on;if(fcount)fcount.disabled=on}
+function lock(on){locked=on;classes.forEach(function(b){b.disabled=on});if(count)count.disabled=on;if(btn)btn.disabled=on;if(fbtn&&!fbtn.hasAttribute('data-shut'))fbtn.disabled=on}
 var eth=window.ethereum;var account=null;
 if(!eth||!eth.request){if(btn){btn.disabled=true;btn.textContent='No wallet detected'}say('No wallet detected. Open this site in your wallet\\u2019s browser, or install one like Rabby, MetaMask or Coinbase Wallet.');return}
 function key(a){return 'onenft_mint:'+CFG.chainHex+':'+CFG.address.toLowerCase()+':'+a.toLowerCase()}
@@ -686,8 +690,9 @@ async function founderRun(){
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
     account=accs[0];
     await switchChain();
-    var cnt=parseInt(fcount&&fcount.value||'1',10);if(!(cnt>=1))cnt=1;if(cnt>CFG.maxBatch)cnt=CFG.maxBatch;
-    say('Confirm the founder mint in your wallet: '+cnt+(cnt===1?' coin':' coins')+feeText()+'.');
+    // One band, one coin: the next band opens two hundred coins later, so a batch could never fit.
+    var cnt=1;
+    say('Confirm the founder mint in your wallet: one coin'+feeText()+'.');
     var data=CFG.sel.mintFounder+word(BigInt(cnt))+addr(account);
     var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data})]});
     keep(account,{stage:'mint',hash:hash});
@@ -773,10 +778,14 @@ export function coinActions(chain: ChainState, c: CoinRecord, now = Date.now()):
   if (!c.owner) return "";
   const fee = (c.profit * BigInt(FEE_PCT)) / 100n;
   const onBurn = c.nav - fee;
-  const confirm = `Burning coin ${pad5(c.id)} sends ${usdcExact(onBurn)} USDC to your wallet and destroys the coin. This cannot be undone.`;
+  const confirm = `Burning coin ${pad5(c.id)} sends ${usdcExact(onBurn)} USDC to your wallet and destroys the coin.${c.sealed ? " It never got its seed, so it has no art and never will." : ""} This cannot be undone.`;
   const claimable = c.profit > 0n;
   const open = redeemable(c, now);
-  const burnLabel = c.sealed ? "Burning opens when the coin opens" : open ? `Burn and redeem ${usdc(onBurn)}` : `Burning opens on ${dateOf(c.redeemableAt)}`;
+  const burnLabel = open
+    ? `Burn and redeem ${usdc(onBurn)}`
+    : c.sealed
+      ? `Burning opens on ${dateOf(c.sealedEscapeAt)} if the seed never arrives`
+      : `Burning opens on ${dateOf(c.redeemableAt)}`;
   const who = c.owner.toLowerCase();
   return `<div class="actions" id="acts-${c.id}">
 <button class="btn" type="button" data-act="claim" data-id="${c.id}" data-owner="${who}" hidden${claimable ? "" : " disabled"}>${claimable ? `Claim ${usdc(c.profit - fee)}` : "Nothing to claim yet"}</button>
@@ -861,7 +870,7 @@ export function coinPage(chain: ChainState, c: CoinRecord, names: Names = NO_NAM
   const next = older ? `<a rel="next" href="/coin/${older}" aria-label="Coin ${pad5(older)}">›</a>` : `<span class="gone"></span>`;
   const owner = c.owner ? `${isAuthor(chain, c.owner) ? "held by the author" : `held by ${ownerLink(c.owner, names)}`}` : "holder unknown";
   const body = `<main id="main" class="single">${topBar(`#${pad5(c.id)}`)}${staleNote(status)}
-${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads on its own when it opens.</p>` : ""}
+${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads on its own when it opens. If the seed never arrives, this coin can be burned for its backing from ${dateOf(c.sealedEscapeAt)}.</p>` : ""}
 <div class="step">${prev}${next}</div>
 <img class="coinimg px" src="/coin/${c.id}.svg" alt="Coin ${pad5(c.id)}" width="512" height="512">
 <span class="num syne">#${pad5(c.id)}</span>
@@ -870,7 +879,7 @@ ${traitList(coin, c.sealed)}
 ${moneyBlock(c, coin.yieldLevel)}
 ${coinActions(chain, c)}
 <p class="msg" id="msg" aria-live="polite"></p>
-<p class="small">${c.sealed ? `A sealed coin already holds its backing and already earns. Only the art is missing. It cannot be burned while it is sealed, and not before ${dateOf(c.redeemableAt)}.` : `The top eight hex digits of the seed are written under the coin; the low 32 bits are the 32 marks on the inner rim, light for one, dark for zero. The ring outside the coin is its yield: level ${coin.yieldLevel} of ${YIELD_STEPS.length}. It grows with lifetime yield and never resets, not on a claim, not on a transfer. The coin can be burned from ${dateOf(c.redeemableAt)}; claiming its yield is open the whole time.`}</p>
+<p class="small">${c.sealed ? `A sealed coin already holds its backing and already earns. Only the art is missing. It cannot be burned while it is sealed, unless the seed never comes: from ${dateOf(c.sealedEscapeAt)} the contract opens the door anyway, so the backing is never trapped by a request nobody answered.` : `The top eight hex digits of the seed are written under the coin; the low 32 bits are the 32 marks on the inner rim, light for one, dark for zero. The ring outside the coin is its yield: level ${coin.yieldLevel} of ${YIELD_STEPS.length}. It grows with lifetime yield and never resets, not on a claim, not on a transfer. The coin can be burned from ${dateOf(c.redeemableAt)}; claiming its yield is open the whole time.`}</p>
 <nav class="nav small" aria-label="Links"><a href="${explorer(chain.chainId)}/nft/${chain.address}/${c.id}">Basescan</a><a href="${openseaCoin(chain.chainId, chain.address, c.id)}">OpenSea</a><a href="/coin/${c.id}.png">Link card</a><a href="/api/coin/${c.id}">JSON</a></nav>
 ${sizePicker()}
 ${downloadBar(c.id, coin.palette.bg)}

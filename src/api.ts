@@ -44,6 +44,8 @@ export function coinJson(c: CoinRecord, chain: ChainState, names: Names = NO_NAM
     /** Unix seconds. A coin can be burned from `redeemableAt`, and never while it is sealed. */
     mintedAt: c.mintedAt,
     redeemableAt: c.redeemableAt,
+    /** When the seed never arrives, the coin can still be burned for its backing from here. */
+    sealedEscapeAt: c.sealedEscapeAt,
     redeemable: redeemable(c),
     attributes: attrsOf(c),
     rarity: c.sealed || coin.masterName ? null : { oneIn: oneInOf(coin.traits), rarest: rarestOf(coin.traits) },
@@ -89,10 +91,16 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     mastersFound: chain ? MASTERS_PER_SERIES - chain.mastersLeft : null,
     founderPerSeries: FOUNDER_PER_SERIES,
     founderMinted: chain?.founderMinted ?? null,
+    /** The band the author's next founder coin must be minted in, straight from the contract. */
+    founderWindow: chain ? chain.founder : null,
+    founderPace: chain?.founderPace ?? null,
+    /** The position the next coin of the series will take, 1-based. */
+    position: chain?.position ?? null,
     foundersFunded: chain?.foundersFunded ?? null,
     treasuryAssetsUnits: chain ? units(chain.treasuryAssets) : null,
     maxBatch: chain?.maxBatch ?? null,
     redeemLockSeconds: chain?.redeemLock ?? null,
+    sealedEscapeSeconds: chain?.sealedEscape ?? null,
     /** Wei a mint must send on to the Chainlink subscription, one fee per transaction. */
     vrfFeeWei: chain ? chain.vrfFeeWei.toString() : null,
     backings: chain?.backings ?? [...BACKINGS],

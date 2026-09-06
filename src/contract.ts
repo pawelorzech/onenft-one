@@ -60,6 +60,9 @@ export const ABI = parseAbi([
   "function vrfFeeWei() view returns (uint256)",
   "function REDEEM_LOCK() view returns (uint256)",
   "function FOUNDER_PACE() view returns (uint256)",
+  "function SEALED_ESCAPE() view returns (uint256)",
+  "function founderWindow(uint256 series) view returns (uint256 k, uint256 opensAt, uint256 closesAt, bool open)",
+  "function sealedEscapeAt(uint256 id) view returns (uint256)",
   "function RETRY_BLOCKS() view returns (uint256)",
   "function ownerOf(uint256 id) view returns (address)",
   "function yieldBps(uint256 id) view returns (uint32)",
@@ -77,7 +80,8 @@ export const ABI = parseAbi([
   "event Redeemed(uint256 indexed id, address indexed to, uint256 assets, uint256 fee)",
   // The reverts a minter or a holder can meet. The browser matches them by selector and says
   // what happened in words; without them a wallet shows four bytes of hex.
-  "error FounderTooEarly(uint256 series, uint256 k, uint256 needed)",
+  "error FounderTooEarly(uint256 series, uint256 k, uint256 opensAt)",
+  "error FounderBandMissed(uint256 series, uint256 k, uint256 closedAt)",
   "error VaultFull(uint256 assets, uint256 maxDeposit)",
   "error VaultIlliquid(uint256 needed, uint256 available)",
   "error TooSoon(uint256 id, uint256 redeemableAt)",
@@ -109,11 +113,12 @@ export const SELECTORS = {
  * so the page carries the sentence. Order does not matter; the selector is the key.
  */
 export const REVERTS: [string, string][] = [
-  ["FounderTooEarly(uint256,uint256,uint256)", "This founder coin is not open yet. The series has to hold more coins first."],
+  ["FounderTooEarly(uint256,uint256,uint256)", "This founder coin is not open yet. Its band starts further into the series."],
+  ["FounderBandMissed(uint256,uint256,uint256)", "This founder coin's band has closed. It is forfeited, and the next one opens later in the series."],
   ["VaultFull(uint256,uint256)", "The vault is not taking deposits right now. Nothing was spent beyond gas. Try again later."],
   ["VaultIlliquid(uint256,uint256)", "The vault cannot release that much right now. Your coin is untouched. Try again later."],
   ["TooSoon(uint256,uint256)", "This coin cannot be burned yet. Thirty days must pass after its mint."],
-  ["SealedCoin(uint256)", "A sealed coin cannot be burned. Wait for its seed, then burn it."],
+  ["SealedCoin(uint256)", "A sealed coin cannot be burned yet. Wait for its seed, or for the escape date if the seed never comes."],
   ["FeeTooLow(uint256,uint256)", "The Chainlink fee changed while this page was open. Reload it and mint again."],
   ["NothingToClaim(uint256)", "There is nothing to claim on this coin yet."],
 ].map(([sig, said]) => [toFunctionSelector(sig), said]);
@@ -150,6 +155,8 @@ export type CoinRecord = {
   mintedAt: number;
   /** Unix seconds from which the coin can be burned. */
   redeemableAt: number;
+  /** Unix seconds from which a coin the VRF never answered for can be burned anyway. */
+  sealedEscapeAt: number;
   /** What the coin's shares are worth now, in USDC units. */
   nav: bigint;
   /** Yield not yet claimed, in USDC units. */
@@ -161,6 +168,9 @@ export type CoinRecord = {
   master: number;
   owner: Address | null;
 };
+
+/** The band the author's next founder coin must be minted in. `open` is the contract's own answer, not ours. */
+export type FounderWindow = { k: number; opensAt: number; closesAt: number; open: boolean };
 
 export type ChainState = {
   address: Address;
@@ -195,8 +205,14 @@ export type ChainState = {
   redeemLock: number;
   /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per transaction, whatever the count. */
   vrfFeeWei: bigint;
-  /** Coins of a series that must exist per founder coin before the author may mint the next one. */
+  /** Coins of a series in one founder band. Band k runs from coin `pace * (k - 1) + 1` to `pace * k`. */
   founderPace: number;
+  /** Seconds a coin stays sealed before it can be burned without ever having had a seed. */
+  sealedEscape: number;
+  /** The position the next coin of the series will take, 1-based. */
+  position: number;
+  /** Where the next founder coin can be minted, straight from the contract. */
+  founder: FounderWindow;
   /** The three backing classes in whole USDC, read from the contract. */
   backings: number[];
   /** Every coin that exists, by id. A redeemed coin leaves the map. */
@@ -240,20 +256,6 @@ export function scrubError(e: unknown): string {
   return m.replace(/https?:\/\/\S+/g, "[rpc]").slice(0, 200);
 }
 
-/**
- * How many founder coins the author may mint right now. Founder coin k of a series waits until
- * the series already holds `FOUNDER_PACE * k` coins, and a batch is judged by its last coin,
- * so the answer is how many whole paces the series has run, less the founder coins already out.
- */
-export function founderReady(chain: ChainState): number {
-  const earned = Math.floor(chain.seriesMinted / chain.founderPace) - chain.founderMinted;
-  return Math.max(0, Math.min(earned, chain.maxBatch, FOUNDER_PER_SERIES - chain.founderMinted));
-}
-/** The coins the series needs before the author's next founder coin opens. */
-export function founderNeeds(chain: ChainState): number {
-  return chain.founderPace * (chain.founderMinted + 1);
-}
-
 export const seriesOf = (id: number) => Math.floor((id - 1) / SERIES_SIZE) + 1;
 export const numberOf = (id: number) => ((id - 1) % SERIES_SIZE) + 1;
 
@@ -283,7 +285,7 @@ async function multicallBatch<T>(ids: number[], fn: "coinOf" | "ownerOf"): Promi
   return out;
 }
 
-function recordOf(id: number, info: Info, owner: Address | null, backings: number[]): CoinRecord {
+function recordOf(id: number, info: Info, owner: Address | null, backings: number[], sealedEscape: number): CoinRecord {
   const slot = info.sealed_ ? null : info.slot;
   return {
     id,
@@ -302,6 +304,7 @@ function recordOf(id: number, info: Info, owner: Address | null, backings: numbe
     requestId: info.requestId,
     mintedAt: Number(info.mintedAt),
     redeemableAt: Number(info.redeemableAt),
+    sealedEscapeAt: Number(info.mintedAt) + sealedEscape,
     nav: info.nav,
     profit: info.profit,
     lifetime: info.lifetime,
@@ -324,22 +327,23 @@ function idsToRead(last: number, all: boolean): number[] {
 async function readChainState(): Promise<ChainState> {
   if (!client || !CONTRACT) throw new Error("no contract configured");
   const c = { address: CONTRACT, abi: ABI } as const;
-  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, founderPace, b0, b1, b2] = await client.multicall({
+  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, founderPace, sealedEscape, b0, b1, b2] = await client.multicall({
     contracts: [
       { ...c, functionName: "author" }, { ...c, functionName: "renderer" }, { ...c, functionName: "rendererLocked" },
       { ...c, functionName: "minted" }, { ...c, functionName: "nextId" }, { ...c, functionName: "USDC" }, { ...c, functionName: "VAULT" },
-      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" }, { ...c, functionName: "FOUNDER_PACE" },
+      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" }, { ...c, functionName: "FOUNDER_PACE" }, { ...c, functionName: "SEALED_ESCAPE" },
       { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] },
     ],
     allowFailure: false,
   });
   const last = Number(nextIdRaw) - 1;
   const series = last >= 1 ? seriesOf(last) : 1;
-  const [urnLeft, mastersLeft, founderMinted] = await client.multicall({
+  const [urnLeft, mastersLeft, founderMinted, window] = await client.multicall({
     contracts: [
       { ...c, functionName: "urnLeft", args: [BigInt(series)] },
       { ...c, functionName: "mastersLeft", args: [BigInt(series)] },
       { ...c, functionName: "founderMinted", args: [BigInt(series)] },
+      { ...c, functionName: "founderWindow", args: [BigInt(series)] },
     ],
     allowFailure: false,
   });
@@ -354,7 +358,7 @@ async function readChainState(): Promise<ChainState> {
   ids.forEach((id, i) => {
     const info = infos[i];
     if (!info) { coins.delete(id); return; }
-    coins.set(id, recordOf(id, info, owners[i] ?? null, backings));
+    coins.set(id, recordOf(id, info, owners[i] ?? null, backings, Number(sealedEscape)));
   });
   if (all) allReadAt = Date.now();
 
@@ -383,6 +387,9 @@ async function readChainState(): Promise<ChainState> {
     redeemLock: Number(redeemLock),
     vrfFeeWei,
     founderPace: Number(founderPace),
+    sealedEscape: Number(sealedEscape),
+    position: numberOf(Number(nextIdRaw)),
+    founder: { k: Number(window[0]), opensAt: Number(window[1]), closesAt: Number(window[2]), open: window[3] },
     backings,
     coins,
     readAt: Date.now(),

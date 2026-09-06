@@ -631,14 +631,6 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         return bps > MAX_YIELD_BPS ? MAX_YIELD_BPS : uint32(bps);
     }
 
-    /// @dev The same, rounded up and never past the position. Used for the author's fee, so a
-    /// rounding unit always falls to the author and never out of the holder's backing.
-    function _sharesForUp(uint256 shares, uint256 nav_, uint256 assets) internal pure returns (uint256) {
-        if (nav_ == 0) return 0;
-        uint256 s = (shares * assets + nav_ - 1) / nav_;
-        return s > shares ? shares : s;
-    }
-
     /// @dev The shares that stand for `assets` out of a position of `shares` worth `nav_`.
     /// Proportional on purpose: it can never hand out more shares than the position holds,
     /// which `convertToShares` could do on a vault that rounds the other way.
@@ -675,7 +667,11 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         // The fee is a ninth of what the holder actually got, which is ten percent of the gain
         // released. Taking ten percent of the gain on paper would charge the part the vault
         // could not free, and charge it again on the next claim.
-        uint256 feeShares = (outShares * FEE_BPS + (BPS - FEE_BPS) - 1) / (BPS - FEE_BPS);
+        // It rounds down, and that direction is not a preference. Rounding up would charge a
+        // whole share on a release of one share, which is half of it and not a tenth, and a
+        // vault handing back a share at a time would compound that into most of the yield. The
+        // author gives up at most one share unit a claim; the holder can never be overcharged.
+        uint256 feeShares = outShares * FEE_BPS / (BPS - FEE_BPS);
         // The fee never eats into what the coin keeps beyond its own share of the gain.
         if (feeShares + outShares > shares) feeShares = shares - outShares;
         uint256 feeAssets = VAULT.convertToAssets(feeShares);
@@ -723,7 +719,9 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         uint256 gain = nav_ > principal ? nav_ - principal : 0;
 
         uint256 fee = gain * FEE_BPS / BPS;
-        uint256 feeShares = _sharesForUp(shares, nav_, fee);
+        // Down, for the same reason as in `claim`: on a coin holding very few shares, rounding
+        // up could take the whole position and leave the owner with nothing.
+        uint256 feeShares = _sharesFor(shares, nav_, fee);
         uint256 outShares = shares - feeShares;
         // A burn is one shot, so a vault that cannot pay today must not be allowed to swallow
         // the coin. The holder keeps it and comes back when the liquidity is there.
