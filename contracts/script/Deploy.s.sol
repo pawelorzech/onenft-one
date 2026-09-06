@@ -25,10 +25,12 @@ contract Deploy is Script {
         bytes32 keyHash = vm.envBytes32("ONE_KEY_HASH");
         uint256 subId = vm.envUint("ONE_SUB_ID");
         uint256 vrfFeeWei = vm.envUint("ONE_VRF_FEE_WEI");
+        uint32 callbackGas = uint32(vm.envUint("ONE_CALLBACK_GAS"));
 
         vm.startBroadcast();
-        token =
-            new OneCoin(name_, symbol_, author, usdc, vault, renderer, coordinator, keyHash, subId, vrfFeeWei);
+        token = new OneCoin(
+            name_, symbol_, author, usdc, vault, renderer, coordinator, keyHash, subId, vrfFeeWei, callbackGas
+        );
         vm.stopBroadcast();
 
         console.log("OneCoin", address(token));

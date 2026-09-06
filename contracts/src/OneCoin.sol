@@ -40,10 +40,9 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// Fifty founder coins a series are reserved for the author, free. Their backing is not paid at
 /// mint: the contract fills it from the author's ten percent of yield, oldest founder coin
 /// first, until each holds fifty USDC. Nobody else's money ever backs one. They are paced:
-/// founder coin k waits until the series already holds two hundred times k coins, so the author
-/// cannot save the free mints for a moment when the urn happens to be dense with masters. The
-/// pacing bites at the end of a series, where coin fifty would need ten thousand coins to exist
-/// before it, so forty nine of the fifty slots can be taken and the last one cannot.
+/// founder coin k waits until the series reaches two hundred times k coins, counting the coin
+/// itself, so the author cannot save the free mints for a moment when the urn happens to be
+/// dense with masters. Coin fifty lands on the ten thousandth coin, the last of its series.
 ///
 /// The image is drawn by a separate renderer from the coin's own numbers. The renderer
 /// address is pinned per coin at mint, so `setRenderer` touches future coins only, and
@@ -72,8 +71,16 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     uint256 public constant BACKING_50 = 50e6;
     /// @notice What a founder coin is filled to from the fees, in USDC units.
     uint256 public constant FOUNDER_BACKING = BACKING_50;
-    /// @notice Gas the coordinator is asked to give `fulfillRandomWords`, enough for MAX_BATCH coins.
-    uint32 public constant CALLBACK_GAS = 2_000_000;
+    /// @notice The least `callbackGas` a deploy may ask for. The costly callback is a batch of
+    /// ten that straddles a series boundary, because it writes into two urns: measured at
+    /// 408,324 gas. This floor keeps that under sixty percent of what the coordinator grants,
+    /// which matters because a callback that runs out of gas leaves those coins sealed and a
+    /// retry would fail the same way every time.
+    uint32 public constant MIN_CALLBACK_GAS = 800_000;
+    /// @notice The most it may ask for. Chainlink holds the lane's worst case, callbackGas times
+    /// the lane's maximum gas price plus the premium, against the subscription balance before it
+    /// will answer at all, so asking for headroom nobody needs stalls the request.
+    uint32 public constant MAX_CALLBACK_GAS = 2_500_000;
     /// @notice Block confirmations the coordinator waits before answering.
     uint16 public constant REQUEST_CONFIRMATIONS = 3;
     /// @notice Blocks after a request before anyone may `retry` it. Four hours of Base blocks.
@@ -106,6 +113,11 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @notice The least ETH a mint must send. The whole value sent goes on to the subscription
     /// in the same transaction, so the minter pays for their own randomness.
     uint256 public immutable vrfFeeWei;
+    /// @notice Gas the coordinator is asked to give `fulfillRandomWords`, enough for a full batch
+    /// of MAX_BATCH coins and no more. Set at deploy because the right number depends on the
+    /// lane: the coordinator will not answer until the subscription covers this figure at the
+    /// lane's maximum gas price, so a generous limit on an expensive lane leaves coins sealed.
+    uint32 public immutable callbackGas;
 
     // ---- storage ----
 
@@ -201,6 +213,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     error VaultFull(uint256 assets, uint256 maxDeposit);
     error VaultIlliquid(uint256 needed, uint256 available);
     error PayoutFailed();
+    error BadCallbackGas(uint32 callbackGas);
     error RetryTooEarly(uint256 requestId, uint256 openAtBlock);
     error RequestIdInUse(uint256 requestId);
     error FoundersUnfunded(uint256 firstUnfunded);
@@ -217,6 +230,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @param keyHash_ the VRF lane
     /// @param subId_ the VRF subscription this contract is a consumer of
     /// @param vrfFeeWei_ the least ETH a mint must send on to that subscription
+    /// @param callbackGas_ gas for the VRF callback, between MIN_CALLBACK_GAS and MAX_CALLBACK_GAS
     constructor(
         string memory name_,
         string memory symbol_,
@@ -227,8 +241,12 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         address coordinator_,
         bytes32 keyHash_,
         uint256 subId_,
-        uint256 vrfFeeWei_
+        uint256 vrfFeeWei_,
+        uint32 callbackGas_
     ) ERC721(name_, symbol_) Ownable(author_) VRFConsumerV2Plus(coordinator_) {
+        if (callbackGas_ < MIN_CALLBACK_GAS || callbackGas_ > MAX_CALLBACK_GAS) {
+            revert BadCallbackGas(callbackGas_);
+        }
         if (author_ == address(0) || coordinator_ == address(0)) revert BadRecipient();
         address asset = IERC4626(vault_).asset();
         if (asset != usdc_) revert BadVault(vault_, asset);
@@ -239,6 +257,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         keyHash = keyHash_;
         subId = subId_;
         vrfFeeWei = vrfFeeWei_;
+        callbackGas = callbackGas_;
         renderer = renderer_;
         emit RendererSet(renderer_);
     }
@@ -358,14 +377,15 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         if (seriesOf(lastId) != series) revert SeriesBoundary(firstId, lastId);
         uint16 already = founderMinted[series];
         if (already + count > FOUNDERS_PER_SERIES) revert FounderReserveFull(series, already, count);
-        // Founder coin k of a series waits until the series already holds 200 times k coins. A
-        // batch is judged by its last coin. This is what stops the author from saving the free
-        // mints for a moment when the urn happens to be dense with masters; the odds are public,
-        // so everyone reads the same numbers and the author cannot act on them alone.
+        // Founder coin k of a series waits until the series reaches 200 times k coins, counting
+        // the coin being minted, and a batch is judged by its last coin. This is what stops the
+        // author from saving the free mints for a moment when the urn happens to be dense with
+        // masters; the odds are public, so everyone reads the same numbers and the author cannot
+        // act on them alone. Coin fifty lands on 10000, which is the last coin of the series, so
+        // all fifty reserved slots stay reachable.
         uint256 k = uint256(already) + count;
         uint256 needed = FOUNDER_PACE * k;
-        uint256 existing = numberOf(firstId) - 1;
-        if (existing < needed) revert FounderTooEarly(series, k, needed);
+        if (numberOf(lastId) < needed) revert FounderTooEarly(series, k, needed);
         founderMinted[series] = already + count;
 
         for (uint256 i = 0; i < count; i++) {
@@ -417,7 +437,7 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
                 keyHash: keyHash,
                 subId: subId,
                 requestConfirmations: REQUEST_CONFIRMATIONS,
-                callbackGasLimit: CALLBACK_GAS,
+                callbackGasLimit: callbackGas,
                 numWords: count,
                 extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: NATIVE_PAYMENT}))
             })

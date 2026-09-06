@@ -72,6 +72,10 @@ contract MockVRFCoordinator is IVRFCoordinatorV2Plus {
         return requests[requestId].consumer;
     }
 
+    function callbackGasOf(uint256 requestId) external view returns (uint32) {
+        return requests[requestId].callbackGas;
+    }
+
     /// @notice Answer a request with words the test chose.
     function fulfill(uint256 requestId, uint256[] memory words) public {
         Recorded storage r = requests[requestId];

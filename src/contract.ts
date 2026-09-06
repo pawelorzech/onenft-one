@@ -69,7 +69,7 @@ export const ABI = parseAbi([
   "function mintFounder(uint8 count, address to) payable returns (uint256)",
   "function claim(uint256 id) returns (uint256)",
   "function redeem(uint256 id) returns (uint256)",
-  "function retry(uint256 requestId) returns (uint256)",
+  "function retry(uint256 requestId) payable returns (uint256)",
   "function fundFounders(uint8 max)",
   "event Minted(uint256 indexed id, address indexed to, uint8 backingClass, uint256 requestId)",
   "event Revealed(uint256 indexed id, uint64 seed, uint16 slot)",

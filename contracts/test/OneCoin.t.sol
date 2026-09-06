@@ -30,6 +30,7 @@ contract OneCoinTest is Test {
     bytes32 internal constant KEY_HASH = keccak256("base lane");
     uint256 internal constant SUB_ID = 4242;
     uint256 internal constant FEE = 0.00005 ether;
+    uint32 internal constant CALLBACK_GAS = 800_000;
 
     /// @dev Slots of `nextId` and `minted`, from `forge inspect OneCoin storage`. Used to walk
     /// the id counter without minting thousands of coins first. `_jumpTo` checks the write
@@ -52,7 +53,8 @@ contract OneCoinTest is Test {
             address(vrf),
             KEY_HASH,
             SUB_ID,
-            FEE
+            FEE,
+            CALLBACK_GAS
         );
         vm.deal(author, 100 ether);
         vm.deal(buyer, 100 ether);
@@ -146,7 +148,7 @@ contract OneCoinTest is Test {
             abi.encodeWithSelector(OneCoin.BadVault.selector, address(wrong), address(other))
         );
         new OneCoin(
-            "ONE", "ONE", author, address(usdc), address(wrong), address(renderer), address(vrf), KEY_HASH, SUB_ID, FEE
+            "ONE", "ONE", author, address(usdc), address(wrong), address(renderer), address(vrf), KEY_HASH, SUB_ID, FEE, CALLBACK_GAS
         );
     }
 
@@ -154,14 +156,14 @@ contract OneCoinTest is Test {
         BadMockRenderer bad = new BadMockRenderer();
         vm.expectRevert(abi.encodeWithSelector(OneCoin.BadRenderer.selector, address(bad)));
         new OneCoin(
-            "ONE", "ONE", author, address(usdc), address(vault), address(bad), address(vrf), KEY_HASH, SUB_ID, FEE
+            "ONE", "ONE", author, address(usdc), address(vault), address(bad), address(vrf), KEY_HASH, SUB_ID, FEE, CALLBACK_GAS
         );
     }
 
     function test_ConstructorRejectsRendererWithoutCode() public {
         vm.expectRevert(abi.encodeWithSelector(OneCoin.BadRenderer.selector, stranger));
         new OneCoin(
-            "ONE", "ONE", author, address(usdc), address(vault), stranger, address(vrf), KEY_HASH, SUB_ID, FEE
+            "ONE", "ONE", author, address(usdc), address(vault), stranger, address(vrf), KEY_HASH, SUB_ID, FEE, CALLBACK_GAS
         );
     }
 
@@ -278,11 +280,10 @@ contract OneCoinTest is Test {
         token.mintFounder{value: FEE}(1, stranger);
     }
 
-    /// @dev Pacing and the reserve disagree at the end of a series. Founder coin k waits for
-    /// 200 times k coins to exist already, so coin 50 waits for 10000, and a series of 10000 can
-    /// never have 10000 coins before its last one. Forty nine of the fifty reserved slots can be
-    /// taken; the fiftieth cannot. Flagged, not worked around.
-    function test_FounderPacingLeavesTheFiftiethSlotOutOfReach() public {
+    /// @dev Pacing counts the coin being minted, so founder coin k lands on coin 200k of the
+    /// series and the fiftieth lands on coin 10000, the last one. All fifty reserved slots are
+    /// reachable and the last founder coin closes its series.
+    function test_TheFiftiethFounderCoinIsTheSeriesFinalCoin() public {
         for (uint256 batch = 1; batch <= 4; batch++) {
             _jumpTo(token.FOUNDER_PACE() * batch * 10 + 1);
             vm.prank(author);
@@ -293,19 +294,24 @@ contract OneCoinTest is Test {
         _jumpTo(9801);
         vm.prank(author);
         token.mintFounder{value: FEE}(9, author);
-        assertEq(token.founderMinted(1), 49, "forty nine fit");
+        assertEq(token.founderMinted(1), 49);
 
-        // Not now, and not at the very last id of the series either.
-        vm.prank(author);
-        vm.expectRevert();
-        token.mintFounder{value: FEE}(1, author);
-
-        _jumpTo(10000);
+        // Coin fifty needs the series to reach 10000, so it cannot land one short of the end.
+        _jumpTo(9999);
         vm.prank(author);
         vm.expectRevert(
             abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(50), uint256(10000))
         );
         token.mintFounder{value: FEE}(1, author);
+
+        // On the last coin of the series it goes through, and the reserve is full.
+        _jumpTo(10000);
+        vm.prank(author);
+        uint256 id = token.mintFounder{value: FEE}(1, author);
+        assertEq(id, 10000);
+        assertEq(token.seriesOf(id), 1);
+        assertEq(token.numberOf(id), 10000, "the fiftieth founder closes the series");
+        assertEq(token.founderMinted(1), 50, "all fifty reserved slots were reachable");
     }
 
     function test_FounderPacingHoldsTheFirstFreeMintBack() public {
@@ -316,30 +322,33 @@ contract OneCoinTest is Test {
         token.mintFounder{value: FEE}(1, author);
 
         // One coin short is still short.
-        _jumpTo(200);
+        _jumpTo(199);
         vm.prank(author);
         vm.expectRevert(
             abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(1), uint256(200))
         );
         token.mintFounder{value: FEE}(1, author);
 
-        _jumpTo(201);
+        // Founder coin one is coin two hundred of the series, counting itself.
+        _jumpTo(200);
         vm.prank(author);
-        assertEq(token.mintFounder{value: FEE}(1, author), 201);
+        assertEq(token.mintFounder{value: FEE}(1, author), 200);
     }
 
     function test_AFounderBatchIsJudgedByItsLastCoin() public {
-        // Three at once is founder coins 1, 2 and 3, so the gate is 600, not 200.
-        _jumpTo(201);
+        // Three at once is founder coins 1, 2 and 3, so the gate is 600, not 200, and the last
+        // coin of the batch is the one that has to reach it.
+        _jumpTo(597);
         vm.prank(author);
         vm.expectRevert(
             abi.encodeWithSelector(OneCoin.FounderTooEarly.selector, uint256(1), uint256(3), uint256(600))
         );
         token.mintFounder{value: FEE}(3, author);
 
-        _jumpTo(601);
+        _jumpTo(598);
         vm.prank(author);
-        token.mintFounder{value: FEE}(3, author);
+        uint256 f = token.mintFounder{value: FEE}(3, author);
+        assertEq(token.numberOf(f + 2), 600, "the last coin of the batch lands exactly on the gate");
         assertEq(token.founderMinted(1), 3);
     }
 
@@ -1587,6 +1596,58 @@ contract OneCoinTest is Test {
         assertEq(token.ownerOf(id), holder);
     }
 
+    // ---- the one gas budget the contract does not control ----
+
+    function test_TheCallbackGasIsSetAtDeployAndBounded() public {
+        assertEq(token.callbackGas(), CALLBACK_GAS);
+        assertEq(token.MIN_CALLBACK_GAS(), 800_000);
+        assertEq(token.MAX_CALLBACK_GAS(), 2_500_000);
+        assertEq(vrf.callbackGasOf(_lastRequestOrZero()), 0, "no request yet");
+
+        _buy(buyer, 0, 1, holder);
+        assertEq(vrf.callbackGasOf(_lastRequest()), CALLBACK_GAS, "the request asks for what was set");
+
+        for (uint32 bad = 0; bad < 2; bad++) {
+            uint32 value = bad == 0 ? uint32(799_999) : uint32(2_500_001);
+            vm.expectRevert(abi.encodeWithSelector(OneCoin.BadCallbackGas.selector, value));
+            new OneCoin(
+                "ONE", "ONE", author, address(usdc), address(vault), address(renderer), address(vrf),
+                KEY_HASH, SUB_ID, FEE, value
+            );
+        }
+    }
+
+    function _lastRequestOrZero() internal view returns (uint256) {
+        return vrf.lastRequestId();
+    }
+
+    /// @dev The costly callback is a full batch that straddles a series boundary: it draws from
+    /// two urns, so it writes two counters and two sets of swap entries. If this ever stops
+    /// fitting inside sixty percent of the floor, the floor is wrong, because a callback that
+    /// runs out of gas leaves those coins sealed and every retry fails the same way.
+    function test_TheWorstCallbackFitsTheFloorWithMargin() public {
+        _jumpTo(9996);
+        uint256 firstId = _buy(buyer, 0, 10, holder);
+        uint256 rid = _lastRequest();
+        uint256[] memory words = new uint256[](10);
+        for (uint256 i = 0; i < 10; i++) {
+            words[i] = uint256(keccak256(abi.encodePacked(uint256(7), i)));
+        }
+
+        vm.cool(address(token));
+        vm.prank(address(vrf));
+        uint256 g = gasleft();
+        token.rawFulfillRandomWords(rid, words);
+        uint256 used = g - gasleft();
+
+        console.log("worst callback, ten coins over a series boundary", used);
+        assertEq(token.urnLeft(1), 9995, "five draws in series one");
+        assertEq(token.urnLeft(2), 9995, "and five in series two");
+        assertFalse(token.coinOf(firstId).sealed_);
+        assertFalse(token.coinOf(firstId + 9).sealed_);
+        assertLt(used, uint256(token.MIN_CALLBACK_GAS()) * 60 / 100, "sixty percent of the floor, with room");
+    }
+
     // ---- gas ----
 
     function test_Gas() public {
@@ -1607,19 +1668,23 @@ contract OneCoinTest is Test {
         console.log("mint(10)     ", g - gasleft());
         vm.stopPrank();
 
-        // The VRF callback is the one call the contract does not control the gas of:
-        // the coordinator gives it CALLBACK_GAS and no more.
+        // The VRF callback is the one call the contract does not control the gas of: the
+        // coordinator gives it `callbackGas` and no more, and it arrives as its own transaction,
+        // so every slot it touches is cold. `vm.cool` puts the contract back in that state, and
+        // an urn nobody has drawn from is the expensive case: each draw writes a swap entry from
+        // zero, which costs 20,000 gas rather than 5,000.
         uint256 rid = _lastRequest();
         uint256[] memory words = new uint256[](10);
         for (uint256 i = 0; i < 10; i++) {
             words[i] = uint256(keccak256(abi.encodePacked(uint256(1), i)));
         }
+        vm.cool(address(token));
         vm.prank(address(vrf));
         g = gasleft();
         token.rawFulfillRandomWords(rid, words);
         uint256 callback = g - gasleft();
-        console.log("fulfil(10)   ", callback);
-        assertLt(callback, token.CALLBACK_GAS(), "the callback fits in the gas the coordinator gives it");
+        console.log("fulfil(10) cold", callback);
+        assertLt(callback, token.callbackGas(), "the callback fits in the gas the coordinator gives it");
         assertFalse(token.coinOf(ten).sealed_);
 
         _reveal(1, 1);
@@ -1660,6 +1725,7 @@ contract OneCoinDeployScriptTest is Test {
         vm.setEnv("ONE_KEY_HASH", vm.toString(keyHash));
         vm.setEnv("ONE_SUB_ID", "4242");
         vm.setEnv("ONE_VRF_FEE_WEI", "50000000000000");
+        vm.setEnv("ONE_CALLBACK_GAS", "800000");
 
         OneCoin token = new Deploy().run();
 
@@ -1674,6 +1740,7 @@ contract OneCoinDeployScriptTest is Test {
         assertEq(token.keyHash(), keyHash);
         assertEq(token.subId(), 4242);
         assertEq(token.vrfFeeWei(), 0.00005 ether);
+        assertEq(token.callbackGas(), 800_000);
     }
 }
 
@@ -1694,6 +1761,7 @@ contract OneCoinRealRendererTest is Test {
     /// @dev docs/CONTRACTS.md section 1: tokenURI must run inside one eth_call of 50M gas.
     uint256 internal constant RPC_CALL_BUDGET = 50_000_000;
     uint256 internal constant FEE = 0.00005 ether;
+    uint32 internal constant CALLBACK_GAS = 800_000;
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -1710,7 +1778,8 @@ contract OneCoinRealRendererTest is Test {
             address(vrf),
             bytes32(0),
             1,
-            FEE
+            FEE,
+            CALLBACK_GAS
         );
         vm.deal(author, 10 ether);
         vm.deal(buyer, 10 ether);
