@@ -12,7 +12,7 @@ import {
   ANOMALIES, ANOMALY_WEIGHTS, MASTERS, YIELD_STEPS, fingerprint, roman, type Coin, type Traits,
 } from "./coin.ts";
 import {
-  SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, FEE_PCT, DEFAULT_MAX_BATCH, DEFAULT_REDEEM_LOCK, SELECTORS, MINTED_TOPIC,
+  RISK, RISK_SHORT, DEFAULT_MAX_BATCH, SELECTORS, MINTED_TOPIC, factsOf, backingList,
   REVERTS, chainName, explorer, openseaCoin, newestCoin, coinIds, mastersFound,
   type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
@@ -24,9 +24,7 @@ export const SITE = "one.onenft.click";
 export const NAME = "ONE";
 export const REPO = "https://github.com/pawelorzech/onenft-one";
 export const PARENT = "onenft.click";
-export { FEE_PCT };
-/** "10, 25 or 50". */
-export const BACKING_LIST = `${BACKINGS.slice(0, -1).join(", ")} or ${BACKINGS[BACKINGS.length - 1]}`;
+export { RISK, RISK_SHORT };
 
 export type Colors = { bg: string; fg: string };
 export type Names = Map<string, string>;
@@ -75,7 +73,7 @@ export function dateOf(unix: number): string {
 /** A span of seconds in days, for copy about the lock. */
 export const days = (seconds: number) => Math.round(seconds / 86400);
 /**
- * True when the coin may be burned now. It needs its art and its thirty days, or, when the seed
+ * True when the coin may be burned now. It needs its art and its lock, or, when the seed
  * never came, the escape date the contract opens for a coin nobody can reveal any more.
  */
 export const redeemable = (c: CoinRecord, now = Date.now()) =>
@@ -288,9 +286,13 @@ const UMAMI_URL = process.env.UMAMI_URL ?? "";
 const UMAMI_WEBSITE_ID = process.env.UMAMI_WEBSITE_ID ?? "";
 const ANALYTICS = UMAMI_URL && UMAMI_WEBSITE_ID ? `<script defer src="${esc(UMAMI_URL)}/script.js" data-website-id="${esc(UMAMI_WEBSITE_ID)}"></script>` : "";
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Newsreader:opsz,wght@6..72,400&display=swap">`;
-export const DESC = `${num(SERIES_SIZE)} pixel coins per series on Base, ${MASTERS_PER_SERIES} one of ones, every coin backed by ${BACKINGS.join(", ")} USDC that earns yield. Burn to redeem.`;
+/** The one-line description. It carries the series' own numbers, so it changes with the contract. */
+export function descOf(chain: ChainState | null): string {
+  const f = factsOf(chain);
+  return `${num(f.seriesSize)} pixel coins per series on Base, ${f.masters} one of ones, every coin backed by ${f.backings.join(", ")} USDC that earns yield. Burn to redeem.`;
+}
 
-export function layout(title: string, p: Colors, body: string, image = "/newest.png", path = "/", description?: string): string {
+export function layout(title: string, p: Colors, body: string, image = "/newest.png", path = "/", description = descOf(null)): string {
   const alt = title.replace(/ \| .*$/, "") + " on " + SITE;
   return `<!doctype html>
 <html lang="en">
@@ -298,12 +300,12 @@ export function layout(title: string, p: Colors, body: string, image = "/newest.
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-<meta name="description" content="${esc(description ?? DESC)}">
+<meta name="description" content="${esc(description)}">
 <meta name="theme-color" content="${p.bg}">
 <link rel="icon" href="/newest.svg" type="image/svg+xml">
 <link rel="canonical" href="https://${SITE}${esc(path)}">
 <meta property="og:title" content="${esc(title)}">
-<meta property="og:description" content="${esc(description ?? DESC)}">
+<meta property="og:description" content="${esc(description)}">
 <meta property="og:image" content="https://${SITE}${esc(image)}">
 <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
 <meta property="og:url" content="https://${SITE}${esc(path)}">
@@ -312,7 +314,7 @@ export function layout(title: string, p: Colors, body: string, image = "/newest.
 <meta property="og:site_name" content="${SITE}">
 <meta property="og:image:alt" content="${esc(alt)}">
 <meta name="twitter:title" content="${esc(title)}">
-<meta name="twitter:description" content="${esc(description ?? DESC)}">
+<meta name="twitter:description" content="${esc(description)}">
 <meta name="twitter:image" content="https://${SITE}${esc(image)}">
 ${FONTS}
 ${ANALYTICS}
@@ -334,7 +336,7 @@ export function topBar(current?: string): string {
   return `<div class="top">${crumb(current)}<nav aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav></div>`;
 }
 export function footer(): string {
-  return `<footer><nav aria-label="Footer">${menu()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. Read <a href="/how">how it works</a> before you mint.</span></footer>`;
+  return `<footer><nav aria-label="Footer">${menu()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. This can lose you money: read <a href="/how#risk">what can go wrong</a> and <a href="/how">how it works</a> before you mint.</span></footer>`;
 }
 export const STEP_KEYS = `<script>
 (function(){document.addEventListener('keydown',function(e){if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;var t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;var a=e.key==='ArrowLeft'?document.querySelector('a[rel=prev]'):e.key==='ArrowRight'?document.querySelector('a[rel=next]'):null;if(a){e.preventDefault();location.href=a.href}})})();
@@ -405,13 +407,13 @@ export function rarestOf(t: Traits): string {
   });
   return `${best.value} (${best.trait}, ${pctOf(best.p)})`;
 }
-export function traitList(coin: Coin, sealed = false): string {
+export function traitList(coin: Coin, sealed = false, f = factsOf(null)): string {
   if (sealed) return `<dl class="traits"><dt>traits</dt><dd>none yet<br><span class="odds">The seed decides them, and it has not arrived.</span></dd></dl>`;
   const t = coin.traits;
   const odds = oddsOf(t);
   const rows: string[] = [];
   if (coin.masterName) {
-    rows.push(`<dt>master coin</dt><dd>${esc(coin.masterName)} <span class="odds">one of ${MASTERS_PER_SERIES} in ${num(SERIES_SIZE)}</span></dd>`);
+    rows.push(`<dt>master coin</dt><dd>${esc(coin.masterName)} <span class="odds">one of ${f.masters} in ${num(f.seriesSize)}</span></dd>`);
     rows.push(`<dt>material</dt><dd>${esc(t.material)}</dd>`);
   } else {
     TABLES.forEach((tb, i) => {
@@ -425,14 +427,14 @@ export function traitList(coin: Coin, sealed = false): string {
 }
 
 /** The capital side of one coin, from the contract's own numbers. */
-export function moneyBlock(c: CoinRecord, level: number): string {
-  const fee = (c.profit * BigInt(FEE_PCT)) / 100n;
+export function moneyBlock(c: CoinRecord, level: number, f = factsOf(null)): string {
+  const fee = (c.profit * BigInt(f.feeBps)) / 10000n;
   const onBurn = c.nav - fee;
   return `<div class="money">
 <div><b>${usdc(c.principal)}</b><span>${c.founder && c.principal < BigInt(c.backing) * 1000000n ? `funded of the ${c.backing} USDC class` : "backing, paid at mint"}</span></div>
 <div><b>${bpsPct(c.yieldBps)}</b><span>lifetime yield over backing, ring level ${level} of ${YIELD_STEPS.length}</span></div>
 <div><b>${usdc(c.lifetime)}</b><span>earned so far, ${usdc(c.claimed)} of it claimed</span></div>
-<div><b>${usdc(onBurn)}</b><span>a burn sends this now, after the ${FEE_PCT}% fee on yield</span></div>
+<div><b>${usdc(onBurn)}</b><span>a burn sends this now, after the ${f.feePct}% fee on yield</span></div>
 </div>`;
 }
 
@@ -478,23 +480,24 @@ export function pageColors(chain: ChainState | null): Colors {
 }
 
 export function sidebar(chain: ChainState | null, status: ChainStatus | null, current?: string): string {
+  const f = factsOf(chain);
   const live = Boolean(chain);
   const series = chain?.series ?? 1;
   // With no contract on this server nothing is minted, and that is a fact, not a gap.
   // With a contract whose chain never answered the counts are unknown, and a zero would be a lie.
   const unknown = !chain && Boolean(status?.configured);
   const mintedHere = chain ? chain.seriesMinted : unknown ? null : 0;
-  const found = chain ? MASTERS_PER_SERIES - chain.mastersLeft : unknown ? null : 0;
+  const found = chain ? f.masters - chain.mastersLeft : unknown ? null : 0;
   return `<aside><div class="stick">
 ${crumb(current)}
-<h1 class="syne">${num(SERIES_SIZE)} coins a series. ${MASTERS_PER_SERIES} one of ones. Every coin backed.</h1>
-<p class="lead">A pixel coin drawn on chain from a random seed, and ${BACKING_LIST} USDC held in a vault that earns. Art and money never correlate: a ${BACKINGS[0]} USDC coin can be a Master Coin. Burn the coin and the backing plus its yield comes back to you.</p>
+<h1 class="syne">${num(f.seriesSize)} coins a series. ${f.masters} one of ones. Every coin backed.</h1>
+<p class="lead">A pixel coin drawn on chain from a random seed, and ${backingList(f.backings)} USDC held in a vault that earns. Art and money never correlate: a ${f.backings[0]} USDC coin can be a Master Coin. Burn the coin and the backing plus its yield comes back to you. ${RISK_SHORT.replace("Read what can go wrong before you mint.", `<a href="/how#risk">Read what can go wrong</a> before you mint.`)}</p>
 <a class="cta syne" href="${live ? "#mint" : "/how"}" aria-disabled="${live ? "false" : "true"}">${live ? "Mint a coin" : status?.configured ? "The chain did not answer" : "Minting opens with the contract"}</a>
 <ul class="facts">
-<li><span class="fig syne">${roman(series)}</span><span class="lab">series, ${num(SERIES_SIZE)} coins each, series without end</span></li>
-<li><span class="fig syne">${mintedHere === null ? "?" : num(mintedHere)}</span><span class="lab">of ${num(SERIES_SIZE)} minted in this series</span></li>
-<li><span class="fig syne">${found === null ? "?" : `${found} of ${MASTERS_PER_SERIES}`}</span><span class="lab">Master Coins drawn from the urn</span></li>
-<li><span class="fig syne">${FEE_PCT}%</span><span class="lab">of the yield goes to the author; nothing else does</span></li>
+<li><span class="fig syne">${roman(series)}</span><span class="lab">series, ${num(f.seriesSize)} coins each, series without end</span></li>
+<li><span class="fig syne">${mintedHere === null ? "?" : num(mintedHere)}</span><span class="lab">of ${num(f.seriesSize)} minted in this series</span></li>
+<li><span class="fig syne">${found === null ? "?" : `${found} of ${f.masters}`}</span><span class="lab">Master Coins drawn from the urn</span></li>
+<li><span class="fig syne">${f.feePct}%</span><span class="lab">of the yield goes to the author; nothing else does</span></li>
 </ul>
 <nav class="nav" aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav>
 </div></aside>`;
@@ -507,29 +510,31 @@ function testnet(chain: ChainState | null): string {
 
 /** The mint box: a class, a count, the total, and one button that walks the whole way. */
 function mintBox(chain: ChainState): string {
+  const f = factsOf(chain);
   const classes = chain.backings.map((b, i) => `<button type="button" data-class="${i}" data-units="${BigInt(b) * 1000000n}" aria-pressed="${i === 0}">${b} USDC</button>`).join("");
-  const soldOut = chain.seriesMinted >= SERIES_SIZE;
+  const soldOut = chain.seriesMinted >= f.seriesSize;
   return `<section class="mint" id="mint" aria-labelledby="mint-h">
 <h2 id="mint-h" class="syne">Mint a coin</h2>
-<p class="small">You choose how much USDC the coin holds. You do not choose the art: the seed comes from Chainlink VRF and the art slot from the urn, a few blocks after your transaction. ${num(SERIES_SIZE - chain.seriesMinted)} left in series ${roman(chain.series)}.${testnet(chain)}</p>
+<p class="small">You choose how much USDC the coin holds. You do not choose the art: the seed comes from Chainlink VRF and the art slot from the urn, a few blocks after your transaction. ${num(f.seriesSize - chain.seriesMinted)} left in series ${roman(chain.series)}.${testnet(chain)}</p>
 <div class="classes" role="group" aria-label="Backing">${classes}</div>
 <div class="count"><label for="count">How many coins<input class="field" id="count" type="number" inputmode="numeric" min="1" max="${chain.maxBatch}" step="1" value="1"></label><span class="small">Up to ${chain.maxBatch} in one transaction.</span></div>
 <p class="total"><span class="small">Total</span><b class="syne" id="total">${chain.backings[0]}.00 USDC</b></p>
 ${chain.vrfFeeWei > 0n ? `<p class="small">Plus ${eth(chain.vrfFeeWei)} for the randomness, paid to Chainlink, one fee per transaction whatever the count. Plus network gas.</p>` : ""}
 <div class="actions">${soldOut ? `<button class="cta syne" disabled>Series ${roman(chain.series)} is full</button>` : `<button class="cta syne" id="mint-btn">Connect wallet</button>`}<button class="btn" id="mint-check" type="button" hidden>Check status</button></div>
 <p class="msg" id="msg" aria-live="polite"></p>
+<p class="note" role="note">This can lose you money. <a href="/how#risk">Read what can go wrong</a> before you mint.</p>
 <div id="sealed" hidden><p class="small">Your coins are minted and sealed. The seed arrives from Chainlink VRF a few blocks later, and this page opens them.</p><div class="strip" id="sealed-list"></div></div>
-<p class="small">The price is the backing and nothing on top; the author takes none of it. You pay the Chainlink fee, network gas, and USDC needs one approval the first time. Burning a coin sends the backing plus its yield back, minus ${FEE_PCT}% of the yield, and a coin can be burned ${days(chain.redeemLock)} days after its mint. Read <a href="/how">how it works</a> first.</p>
+<p class="small">The price is the backing and nothing on top; the author takes none of it. You pay the Chainlink fee, network gas, and USDC needs one approval the first time. Burning a coin sends the backing plus its yield back, minus ${f.feePct}% of the yield, and a coin can be burned ${f.lockDays} days after its mint. Read <a href="/how">how it works</a> first.</p>
 ${(() => {
   const w = chain.founder;
-  const done = chain.founderMinted >= FOUNDER_PER_SERIES || w.k > FOUNDER_PER_SERIES;
-  const band = `Founder coin ${w.k} is minted inside its own band, coins ${num(w.opensAt)} to ${num(w.closesAt)} of series ${roman(chain.series)}. A band that closes without its coin is forfeited.`;
-  const where = done
-    ? `Series ${roman(chain.series)} has all ${FOUNDER_PER_SERIES}.`
+  const where = w.left === 0
+    ? `Series ${roman(chain.series)} has all ${f.founders}.`
     : w.open
-      ? `Open now, until coin ${num(w.closesAt)}. The series is at coin ${num(chain.position)}.`
-      : `Not open. It opens at coin ${num(w.opensAt)}, and the series is at coin ${num(chain.position)}.`;
-  return `<div id="founder-box" hidden><hr><h3 class="syne">Mint a founder coin</h3><p class="small">This wallet is the author. A founder coin carries no backing at mint; the contract fills it from the fee on yield. The Chainlink fee is the same as any mint. ${chain.founderMinted} of ${FOUNDER_PER_SERIES} minted in series ${roman(chain.series)}. ${band} ${where}</p><div class="count"><button class="btn" id="founder-btn" type="button"${w.open && !done ? "" : " disabled data-shut"}>${done ? `No band left in series ${roman(chain.series)}` : w.open ? `Mint founder coin ${w.k}` : `Founder coin ${w.k} opens at coin ${num(w.opensAt)}`}</button></div></div>`;
+      ? `${w.left} left, and the window is open until coin ${num(w.closesAt)} of series ${roman(chain.series)}. The series is at coin ${num(chain.position)}.`
+      : `Closed since coin ${num(w.closesAt)} of series ${roman(chain.series)}. The series is at coin ${num(chain.position)}, so the ${w.left} not minted are forfeited.`;
+  const can = w.open && w.left > 0;
+  const most = Math.max(1, Math.min(chain.maxBatch, w.left));
+  return `<div id="founder-box" hidden><hr><h3 class="syne">Mint founder coins</h3><p class="small">This wallet is the author. A founder coin carries no backing at mint; the contract fills it from the fee on yield. The Chainlink fee is the same as any mint. They are minted at the start of a series, inside its first ${num(w.closesAt)} coins, or not at all. ${w.minted} of ${f.founders} minted. ${where}</p><div class="count"><label for="fcount">How many<input class="field" id="fcount" type="number" inputmode="numeric" min="1" max="${most}" step="1" value="1"${can ? "" : " disabled"}></label><button class="btn" id="founder-btn" type="button"${can ? "" : " disabled data-shut"}>${w.left === 0 ? "None left in this series" : can ? "Mint founder coins" : `The window closed at coin ${num(w.closesAt)}`}</button></div></div>`;
 })()}
 </section>`;
 }
@@ -557,7 +562,7 @@ var CFG=${cfg};if(!CFG.address)return;
 var btn=document.getElementById('mint-btn');var out=document.getElementById('msg');var check=document.getElementById('mint-check');
 var count=document.getElementById('count');var total=document.getElementById('total');var classes=document.querySelectorAll('.classes button');
 var sealedBox=document.getElementById('sealed');var sealedList=document.getElementById('sealed-list');
-var fbox=document.getElementById('founder-box');var fbtn=document.getElementById('founder-btn');
+var fbox=document.getElementById('founder-box');var fbtn=document.getElementById('founder-btn');var fcount=document.getElementById('fcount');
 var cls=0;var units=BigInt(classes.length?classes[0].getAttribute('data-units'):'0');
 function say(t){if(out)out.textContent=t}
 function link(h){return ' <a href="'+CFG.explorer+'/tx/'+h+'" target="_blank" rel="noopener">View transaction</a>'}
@@ -579,7 +584,7 @@ if(count)count.addEventListener('change',function(){count.value=String(n());pain
 paint();
 
 var locked=false;
-function lock(on){locked=on;classes.forEach(function(b){b.disabled=on});if(count)count.disabled=on;if(btn)btn.disabled=on;if(fbtn&&!fbtn.hasAttribute('data-shut'))fbtn.disabled=on}
+function lock(on){locked=on;classes.forEach(function(b){b.disabled=on});if(count)count.disabled=on;if(btn)btn.disabled=on;if(fbtn&&!fbtn.hasAttribute('data-shut')){fbtn.disabled=on;if(fcount)fcount.disabled=on}}
 var eth=window.ethereum;var account=null;
 if(!eth||!eth.request){if(btn){btn.disabled=true;btn.textContent='No wallet detected'}say('No wallet detected. Open this site in your wallet\\u2019s browser, or install one like Rabby, MetaMask or Coinbase Wallet.');return}
 function key(a){return 'onenft_mint:'+CFG.chainHex+':'+CFG.address.toLowerCase()+':'+a.toLowerCase()}
@@ -691,9 +696,8 @@ async function founderRun(){
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
     account=accs[0];
     await switchChain();
-    // One band, one coin: the next band opens two hundred coins later, so a batch could never fit.
-    var cnt=1;
-    say('Confirm the founder mint in your wallet: one coin'+feeText()+'.');
+    var cnt=parseInt(fcount&&fcount.value||'1',10);if(!(cnt>=1))cnt=1;if(cnt>CFG.maxBatch)cnt=CFG.maxBatch;
+    say('Confirm the founder mint in your wallet: '+cnt+(cnt===1?' coin':' coins')+feeText()+'.');
     var data=CFG.sel.mintFounder+word(BigInt(cnt))+addr(account);
     var hash=await eth.request({method:'eth_sendTransaction',params:[withFee({from:account,to:CFG.address,data:data})]});
     keep(account,{stage:'mint',hash:hash});
@@ -777,7 +781,7 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
 /** The two buttons a holder gets on their own coin. */
 export function coinActions(chain: ChainState, c: CoinRecord, now = Date.now()): string {
   if (!c.owner) return "";
-  const fee = (c.profit * BigInt(FEE_PCT)) / 100n;
+  const fee = (c.profit * BigInt(factsOf(chain).feeBps)) / 10000n;
   const onBurn = c.nav - fee;
   const confirm = `Burning coin ${pad5(c.id)} sends ${usdcExact(onBurn)} USDC to your wallet and destroys the coin.${c.sealed ? " It never got its seed, so it has no art and never will." : ""} This cannot be undone.`;
   const claimable = c.profit > 0n;
@@ -796,6 +800,7 @@ export function coinActions(chain: ChainState, c: CoinRecord, now = Date.now()):
 
 export function homePage(chain: ChainState | null, status: ChainStatus | null = null, names: Names = NO_NAMES): string {
   const p = pageColors(chain);
+  const f = factsOf(chain);
   const newest = chain ? newestCoin(chain) : null;
   if (!chain || !newest) return emptyHome(p, chain, status);
   const coin = coinOf(newest);
@@ -807,23 +812,24 @@ ${staleNote(status)}
 <span class="small">Newest coin</span>
 <span class="num syne">#${pad5(newest.id)}</span>
 <div>${coinTags(coin, newest)}</div>
-${traitList(coin, newest.sealed)}
-${moneyBlock(newest, coin.yieldLevel)}
+${traitList(coin, newest.sealed, f)}
+${moneyBlock(newest, coin.yieldLevel, f)}
 <a class="btn" href="/coin/${newest.id}">Open the coin</a>
 </div></section>
 ${mintBox(chain)}
-<div class="counts"><div><b class="syne">${num(chain.seriesMinted)}</b><span class="small">minted in series ${roman(chain.series)}</span></div><div><b class="syne">${num(SERIES_SIZE - chain.seriesMinted)}</b><span class="small">left in the series</span></div><div><b class="syne">${chain.mastersLeft}</b><span class="small">Master Coins still in the urn</span></div><div><b class="syne">${num(chain.pending)}</b><span class="small">sealed, waiting for a seed</span></div><div><b class="syne">${usdc(chain.treasuryAssets)}</b><span class="small">fee on yield, not withdrawn</span></div><div id="yours" hidden><b class="syne">0</b><span class="small">yours</span></div></div>
+<div class="counts"><div><b class="syne">${num(chain.seriesMinted)}</b><span class="small">minted in series ${roman(chain.series)}</span></div><div><b class="syne">${num(f.seriesSize - chain.seriesMinted)}</b><span class="small">left in the series</span></div><div><b class="syne">${chain.mastersLeft}</b><span class="small">Master Coins still in the urn</span></div><div><b class="syne">${num(chain.pending)}</b><span class="small">sealed, waiting for a seed</span></div><div><b class="syne">${usdc(chain.treasuryAssets)}</b><span class="small">fee on yield, not withdrawn</span></div><div id="yours" hidden><b class="syne">0</b><span class="small">yours</span></div></div>
 ${rows}
 <p class="small" style="padding:20px 34px"><a href="/coins">All ${num(chain.coins.size)} ${plural(chain.coins.size, "coin", "coins")}</a></p>
 ${footer()}
 </main></div>
 ${mintScript(chain)}
 ${YOURS}`;
-  return layout(`${NAME} | ${DESC.split(".")[0]}`, p, body);
+  return layout(`${NAME} | ${descOf(chain).split(".")[0]}`, p, body, "/newest.png", "/", descOf(chain));
 }
 
 /** Before the first mint, or with no chain to read: the sealed coin, the numbers, and the door to the rest. */
 function emptyHome(p: Colors, chain: ChainState | null, status: ChainStatus | null): string {
+  const f = factsOf(chain);
   const live = Boolean(chain);
   const body = `<div class="page">${sidebar(chain, status)}<main id="main">
 ${staleNote(status)}
@@ -831,14 +837,14 @@ ${noContractNote(status)}
 <section class="hero"><img class="coinimg px" src="/newest.svg" alt="A sealed coin" width="396" height="396"><div class="meta">
 <span class="small">No coin minted yet</span>
 <span class="num syne">#00001</span>
-<p>The first coin of series ${roman(chain?.series ?? 1)} is still in the urn. Between the mint and the answer from Chainlink VRF a coin looks like this, sealed, with no seed yet; then it opens. See the <a href="/masters">${MASTERS_PER_SERIES} Master Coins</a>, the <a href="/traits">traits and their odds</a>, the <a href="/yield">yield ring</a>, or <a href="/how">how it works</a>.</p>
+<p>The first coin of series ${roman(chain?.series ?? 1)} is still in the urn. Between the mint and the answer from Chainlink VRF a coin looks like this, sealed, with no seed yet; then it opens. See the <a href="/masters">${f.masters} Master Coins</a>, the <a href="/traits">traits and their odds</a>, the <a href="/yield">yield ring</a>, or <a href="/how">how it works</a>.</p>
 </div></section>
 ${chain ? mintBox(chain) : ""}
-<div class="counts"><div><b class="syne">0</b><span class="small">minted</span></div><div><b class="syne">${num(SERIES_SIZE)}</b><span class="small">left in series ${roman(chain?.series ?? 1)}</span></div><div><b class="syne">${MASTERS_PER_SERIES}</b><span class="small">Master Coins in the urn</span></div></div>
+<div class="counts"><div><b class="syne">0</b><span class="small">minted</span></div><div><b class="syne">${num(f.seriesSize)}</b><span class="small">left in series ${roman(chain?.series ?? 1)}</span></div><div><b class="syne">${f.masters}</b><span class="small">Master Coins in the urn</span></div></div>
 ${footer()}
 </main></div>
 ${live ? mintScript(chain) : ""}`;
-  return layout(`${NAME} | ${DESC.split(".")[0]}`, p, body);
+  return layout(`${NAME} | ${descOf(chain).split(".")[0]}`, p, body, "/newest.png", "/", descOf(chain));
 }
 
 export function coinsPage(chain: ChainState | null, page: number, status: ChainStatus | null = null): string {
@@ -877,7 +883,7 @@ ${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed
 <span class="num syne">#${pad5(c.id)}</span>
 <div>${coinTags(coin, c)}<span class="small">${c.sealed ? "sealed" : coin.masterName ? `Master Coin ${esc(coin.masterName)}` : "procedural coin"}, coin ${pad5(c.number)} of series ${roman(c.series)}${c.sealed ? "" : `, seed ${fingerprint(c.seed)}`}, ${owner}</span></div>
 ${traitList(coin, c.sealed)}
-${moneyBlock(c, coin.yieldLevel)}
+${moneyBlock(c, coin.yieldLevel, factsOf(chain))}
 ${coinActions(chain, c)}
 <p class="msg" id="msg" aria-live="polite"></p>
 <p class="small">${c.sealed ? `A sealed coin already holds its backing and already earns. Only the art is missing. It cannot be burned while it is sealed, unless the seed never comes: from ${dateOf(c.sealedEscapeAt)} the contract opens the door anyway, so the backing is never trapped by a request nobody answered.` : `The top eight hex digits of the seed are written under the coin; the low 32 bits are the 32 marks on the inner rim, light for one, dark for zero. The ring outside the coin is its yield: level ${coin.yieldLevel} of ${YIELD_STEPS.length}. It grows with lifetime yield and never resets, not on a claim, not on a transfer. The coin can be burned from ${dateOf(c.redeemableAt)}; claiming its yield is open the whole time.`}</p>
@@ -901,18 +907,19 @@ setTimeout(tick,10000)})();
 
 export function mastersPage(chain: ChainState | null, names: Names = NO_NAMES, status: ChainStatus | null = null): string {
   const p = pageColors(chain);
+  const f = factsOf(chain);
   const found = chain ? mastersFound(chain) : new Map<number, CoinRecord>();
-  const cells = MASTERS.map((m, i) => {
+  const cells = MASTERS.slice(0, f.masters).map((m, i) => {
     const c = found.get(i);
     const img = c ? `/coin/${c.id}.svg` : `/master/${i}.svg`;
     const who = c && c.owner ? `, ${isAuthor(chain, c.owner) ? "the author" : esc(label(c.owner, names))}` : "";
     const inner = `<img src="${img}" alt="${esc(m.name)}" loading="lazy"><div class="cap"><b>${esc(m.name)}</b> ${esc(m.material)}, ${m.mode}${c ? `<br>coin #${pad5(c.id)}${who}` : "<br>still in the urn"}</div>`;
     return c ? `<a class="px" href="/coin/${c.id}">${inner}</a>` : `<div class="px gone">${inner}</div>`;
   });
-  const left = chain ? chain.mastersLeft : MASTERS_PER_SERIES;
+  const left = chain ? chain.mastersLeft : f.masters;
   const body = `<main id="main" class="wide">${topBar("Master Coins")}${staleNote(status)}
-<h2 class="syne">${MASTERS_PER_SERIES} Master Coins a series</h2>
-<p>Each series holds ${num(SERIES_SIZE)} art slots, ${MASTERS_PER_SERIES} of them Master Coins. Every mint draws one slot from the ones left, so the first mint has ${MASTERS_PER_SERIES} in ${num(SERIES_SIZE)} odds and the odds move with every draw, and when the series ends all ${MASTERS_PER_SERIES} are out. A Master Coin carries whatever backing its minter chose, ${BACKING_LIST} USDC. ${MASTERS_PER_SERIES - left} of ${MASTERS_PER_SERIES} drawn in series ${roman(chain?.series ?? 1)}. The images of the ones still in the urn show the master with a sample seed; the rim marks and the legend will differ on the real coin.</p>
+<h2 class="syne">${f.masters} Master Coins a series</h2>
+<p>Each series holds ${num(f.seriesSize)} art slots, ${f.masters} of them Master Coins. Every mint draws one slot from the ones left, so the first mint has ${f.masters} in ${num(f.seriesSize)} odds and the odds move with every draw, and when the series ends all ${f.masters} are out. A Master Coin carries whatever backing its minter chose, ${backingList(f.backings)} USDC. ${f.masters - left} of ${f.masters} drawn in series ${roman(chain?.series ?? 1)}. The images of the ones still in the urn show the master with a sample seed; the rim marks and the legend will differ on the real coin.</p>
 <div class="strip">${cells.join("")}</div>
 ${footer()}</main>`;
   return layout(`Master Coins | ${NAME}`, p, body, "/newest.png", "/masters");
@@ -920,6 +927,7 @@ ${footer()}</main>`;
 
 export function traitsPage(chain: ChainState | null): string {
   const p = pageColors(chain);
+  const f = factsOf(chain);
   const tables = TABLES.map((tb) => {
     const total = tb.weights.reduce((a, b) => a + b, 0);
     const rows = tb.names.map((n, i) => `<tr><td>${esc(n)}</td><td class="n">${pctOf((100 * tb.weights[i]) / total)}</td></tr>`).join("");
@@ -928,7 +936,7 @@ export function traitsPage(chain: ChainState | null): string {
   const body = `<main id="main" class="wide">${topBar("Traits")}
 <h2 class="syne">Eleven traits, drawn from the seed</h2>
 <p>The seed comes from Chainlink VRF. It is drawn into these tables in this order, each draw with the odds below, then into a pattern scale, sixteen bits for the glyph and a salt for speckle. The seed also writes itself on the coin: eight hex digits under it, thirty-two marks on the rim. Two coins with the same eleven traits still differ. Master Coins skip the tables; they keep only their material.</p>
-<p>There is no rarity class. Rarity is the odds of a coin's own traits, and the only status the system defines is the Master Coin: ${MASTERS_PER_SERIES} in ${num(SERIES_SIZE)}, ${pctOf((100 * MASTERS_PER_SERIES) / SERIES_SIZE)} of a series.</p>
+<p>There is no rarity class. Rarity is the odds of a coin's own traits, and the only status the system defines is the Master Coin: ${f.masters} in ${num(f.seriesSize)}, ${pctOf((100 * f.masters) / f.seriesSize)} of a series.</p>
 ${tables.join("")}
 ${footer()}</main>`;
   return layout(`Traits and odds | ${NAME}`, p, body, "/newest.png", "/traits");
@@ -949,27 +957,30 @@ ${footer()}</main>`;
 
 export function howPage(chain: ChainState | null, status: ChainStatus | null = null): string {
   const p = pageColors(chain);
+  const f = factsOf(chain);
   const where = chain
     ? `<p>The contract is <a href="${explorer(chain.chainId)}/address/${chain.address}">${chain.address}</a> on ${chainName(chain.chainId)}. The vault it deposits into is <a href="${explorer(chain.chainId)}/address/${chain.vault}">${chain.vault}</a>, and the USDC is <a href="${explorer(chain.chainId)}/address/${chain.usdc}">${chain.usdc}</a>. The renderer new coins are pinned to is <a href="${explorer(chain.chainId)}/address/${chain.renderer}">${chain.renderer}</a>${chain.rendererLocked ? ", and it is locked for good" : ", and the author may still replace it for coins not yet minted"}.</p>`
     : `<p>${status?.configured ? "The chain did not answer, so the addresses are not on this page right now." : "No contract is configured on this server, so there is no address to show yet."}</p>`;
   const body = `<main id="main" class="prose">${topBar("How it works")}${staleNote(status)}
 <h2 class="syne">Two axes that never touch</h2>
-<p>Every coin has art and capital, and they are drawn apart. The art comes from a random seed and an art slot. The capital is the USDC you put in at mint: ${BACKING_LIST}. You choose the amount; you do not choose the art, and paying more buys no better odds. A ${BACKINGS[0]} USDC coin can be a Master Coin. A ${BACKINGS[2]} USDC coin can be plain.</p>
+<p>Every coin has art and capital, and they are drawn apart. The art comes from a random seed and an art slot. The capital is the USDC you put in at mint: ${backingList(f.backings)}. You choose the amount; you do not choose the art, and paying more buys no better odds. A ${f.backings[0]} USDC coin can be a Master Coin. A ${f.backings[f.backings.length - 1]} USDC coin can be plain.</p>
 <h2 class="syne">Where the money sits</h2>
-<p>The contract deposits your USDC into a vault on Base that follows the ERC-4626 standard and keeps the shares under your coin. The vault lends the USDC out and the shares grow in value. The coin's net asset value is what its shares convert to today. Burn the coin and the contract sends you the backing plus the yield earned, minus ${FEE_PCT}% of that yield, which goes to the author. That is the whole fee. The mint price is the backing, nothing on top. Yield can be claimed without burning; the coin keeps its record of everything it ever earned.</p>
-<p>A coin can be burned ${days(chain?.redeemLock ?? DEFAULT_REDEEM_LOCK)} days after its mint, not before. Claiming its yield is open from the first day; the wait stops churn, not withdrawal. A sealed coin cannot be burned at all, because a burn would take a slot out of a draw whose random words are already public.</p>
+<p>The contract deposits your USDC into a vault on Base that follows the ERC-4626 standard and keeps the shares under your coin. The vault lends the USDC out and the shares grow in value. The coin's net asset value is what its shares convert to today. Burn the coin and the contract sends you the backing plus the yield earned, minus ${f.feePct}% of that yield, which goes to the author. That is the whole fee. The mint price is the backing, nothing on top. Yield can be claimed without burning; the coin keeps its record of everything it ever earned.</p>
+<p>A coin can be burned ${f.lockDays} days after its mint, not before. Claiming its yield is open from the first day; the wait stops churn, not withdrawal. A sealed coin cannot be burned at all, because a burn would take a slot out of a draw whose random words are already public.</p>
 <p>The contract has no admin over the pool. No pause on redeem, no upgrade, no key that can move the funds. The code holds the money, not a person. The vault is a third party with its own risks; read about it before you mint.</p>
 ${where}
 <h2 class="syne">Randomness nobody steers</h2>
-<p>The seed of each coin comes from Chainlink VRF, a verifiable random number the contract requests at mint and receives a few blocks later. A mint sends ${chain ? eth(chain.vrfFeeWei) : "a small amount of ETH"} with it, one fee per transaction whatever the count, and the contract passes it straight to its Chainlink subscription in the same transaction, so the randomness pays for itself and the contract never sits on ETH. Between the two the coin is sealed: it holds its backing and earns, and its art is missing. The art slot comes from an urn: a series has ${num(SERIES_SIZE)} slots, ${MASTERS_PER_SERIES} of them Master Coins, and every mint takes one slot out at random from those left. The odds of a Master Coin start at ${MASTERS_PER_SERIES} in ${num(SERIES_SIZE)} and move with every draw. When a series is full, every one of its ${MASTERS_PER_SERIES} Master Coins is out, no more and no fewer. The author cannot know or choose who gets them. If Chainlink never answers, anyone can ask again from the contract after its retry window, and this site does it for you.</p>
+<p>The seed of each coin comes from Chainlink VRF, a verifiable random number the contract requests at mint and receives a few blocks later. A mint sends ${chain ? eth(chain.vrfFeeWei) : "a small amount of ETH"} with it, one fee per transaction whatever the count, and the contract passes it straight to its Chainlink subscription in the same transaction, so the randomness pays for itself and the contract never sits on ETH. Between the two the coin is sealed: it holds its backing and earns, and its art is missing. The art slot comes from an urn: a series has ${num(f.seriesSize)} slots, ${f.masters} of them Master Coins, and every mint takes one slot out at random from those left. The odds of a Master Coin start at ${f.masters} in ${num(f.seriesSize)} and move with every draw. When a series is full, every one of its ${f.masters} Master Coins is out, no more and no fewer. The author cannot know or choose who gets them. If Chainlink never answers, anyone can ask again from the contract after its retry window, and this site does it for you. If no answer ever comes, the coin can be burned for its backing after ${f.escapeDays} days, so the money is never trapped by a request nobody filled.</p>
 <h2 class="syne">Series without end</h2>
-<p>A series is ${num(SERIES_SIZE)} coins. When it fills, the next one opens with its own urn and its own ${MASTERS_PER_SERIES} Master Coins. The Master Coins keep their names across series; each series renders its own version from a new seed.</p>
+<p>A series is ${num(f.seriesSize)} coins. When it fills, the next one opens with its own urn and its own ${f.masters} Master Coins. The Master Coins keep their names across series; each series renders its own version from a new seed.</p>
 <h2 class="syne">Founder coins</h2>
-<p>${FOUNDER_PER_SERIES} coins a series belong to the author, who mints them from the author wallet at no cost, class ${BACKINGS[BACKINGS.length - 1]} USDC, art from the same urn as everyone. Their backing is not paid at mint. The contract fills it from the author's ${FEE_PCT}% of yield, oldest founder coin first, until each holds its ${BACKINGS[BACKINGS.length - 1]} USDC. Until then the coin shows how much is funded, earns yield on that amount, and a burn returns that amount. No other minter's money ever backs a founder coin. They carry the trait Origin: Founder. On average the author draws ${(FOUNDER_PER_SERIES * MASTERS_PER_SERIES) / SERIES_SIZE} Master Coins a series, and most often none.</p>
+<p>${f.founders} coins a series belong to the author, who mints them from the author wallet at no cost, class ${f.backings[f.backings.length - 1]} USDC, art from the same urn as everyone. They can only be minted while the series is inside its first ${num(f.founderWindow)} coins. When that window closes, whatever the author has not minted is gone for that series, so the free mints cannot wait for a moment when the urn is dense with Master Coins. Their backing is not paid at mint. The contract fills it from the author's ${f.feePct}% of yield, oldest founder coin first, until each holds its ${f.backings[f.backings.length - 1]} USDC. Until then the coin shows how much is funded, earns yield on that amount, and a burn returns that amount. No other minter's money ever backs a founder coin. They carry the trait Origin: Founder.</p>
 <h2 class="syne">The image</h2>
 <p>The coin is a 64 by 64 pixel grid drawn by a renderer contract from the seed and the contract's own numbers. No server, no file store, no link. <code>tokenURI</code> returns the metadata and the SVG inline. The seed is written on the coin: eight hex digits under it, thirty-two marks on the inner rim. The ring outside the coin is its lifetime yield; see the <a href="/yield">yield ring</a>. The renderer can be replaced by the author for future mints only; every coin keeps the renderer it was minted with.</p>
+<h2 class="syne" id="risk">What can go wrong</h2>
+<p>${RISK}</p>
 <h2 class="syne">What this is not</h2>
-<p>Not an investment product and not advice. The yield comes from a lending vault and can be zero or negative if that vault fails. Nobody promises a return. The art is CC0.</p>
+<p>Not an investment product and not advice. The art is CC0.</p>
 ${footer()}</main>`;
   return layout(`How it works | ${NAME}`, p, body, "/newest.png", "/how");
 }

@@ -1,7 +1,7 @@
 /** JSON for other people's code and the hub. Everything here is derived from the chain; nothing is stored. */
 import { YIELD_STEPS, MASTERS, fingerprint, roman } from "./coin.ts";
 import {
-  SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, FEE_PCT,
+  RISK, factsOf,
   coinIds, coinsOf, explorer, openseaCoin, type ChainState, type ChainStatus, type CoinRecord,
 } from "./contract.ts";
 import { SITE, TABLES, oneInOf, rarestOf, isAuthor, redeemable, type Names, NO_NAMES } from "./site.ts";
@@ -65,6 +65,7 @@ export function coinJson(c: CoinRecord, chain: ChainState, names: Names = NO_NAM
 }
 
 export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, status: ChainStatus | null = null) {
+  const f = factsOf(chain);
   const recent = chain ? coinIds(chain).slice(0, 40).map((id) => coinJson(chain.coins.get(id)!, chain, names, status)) : [];
   return {
     site: SITE,
@@ -72,7 +73,7 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     contract: chain ? { address: chain.address, chainId: chain.chainId, renderer: chain.renderer, rendererLocked: chain.rendererLocked, author: chain.author, usdc: chain.usdc, vault: chain.vault } : null,
     series: chain?.series ?? null,
     seriesName: chain ? roman(chain.series) : null,
-    seriesSize: SERIES_SIZE,
+    seriesSize: f.seriesSize,
     /** Coins minted in the current series. Null, not zero, when the chain never answered. */
     totalSupply: chain?.seriesMinted ?? null,
     /** Every coin ever minted, all series, burns included. */
@@ -81,19 +82,19 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     live: chain?.coins.size ?? null,
     /** Coins minted and still waiting for their seed from Chainlink VRF. */
     pending: chain?.pending ?? null,
-    maxSupply: SERIES_SIZE,
-    left: chain ? SERIES_SIZE - chain.seriesMinted : null,
+    maxSupply: f.seriesSize,
+    left: chain ? f.seriesSize - chain.seriesMinted : null,
     /** Master Coin slots nobody has drawn in this series. The hub reads this as the 1/1 pool. */
     poolLeft: chain?.mastersLeft ?? null,
     urnLeft: chain?.urnLeft ?? null,
-    mastersPerSeries: MASTERS_PER_SERIES,
+    mastersPerSeries: f.masters,
     mastersLeft: chain?.mastersLeft ?? null,
-    mastersFound: chain ? MASTERS_PER_SERIES - chain.mastersLeft : null,
-    founderPerSeries: FOUNDER_PER_SERIES,
+    mastersFound: chain ? f.masters - chain.mastersLeft : null,
+    foundersPerSeries: f.founders,
     founderMinted: chain?.founderMinted ?? null,
     /** The band the author's next founder coin must be minted in, straight from the contract. */
     founderWindow: chain ? chain.founder : null,
-    founderPace: chain?.founderPace ?? null,
+    founderWindowCloses: chain?.founderWindow ?? null,
     /** The position the next coin of the series will take, 1-based. */
     position: chain?.position ?? null,
     foundersFunded: chain?.foundersFunded ?? null,
@@ -103,23 +104,27 @@ export function stateJson(chain: ChainState | null, names: Names = NO_NAMES, sta
     sealedEscapeSeconds: chain?.sealedEscape ?? null,
     /** Wei a mint must send on to the Chainlink subscription, one fee per transaction. */
     vrfFeeWei: chain ? chain.vrfFeeWei.toString() : null,
-    backings: chain?.backings ?? [...BACKINGS],
-    feePercentOfYield: FEE_PCT,
+    backings: f.backings,
+    feePercentOfYield: f.feePct,
     yieldSteps: YIELD_STEPS,
+    risk: RISK,
     chain: chainBlock(status),
     recent,
   };
 }
 
-export function specJson() {
+export function specJson(chain: ChainState | null = null) {
+  const f = factsOf(chain);
   return {
     site: SITE,
-    seriesSize: SERIES_SIZE,
-    mastersPerSeries: MASTERS_PER_SERIES,
+    seriesSize: f.seriesSize,
+    mastersPerSeries: f.masters,
+    foundersPerSeries: f.founders,
     masters: MASTERS.map((m) => ({ name: m.name, mode: m.mode, material: m.material })),
-    backings: [...BACKINGS],
-    feePercentOfYield: FEE_PCT,
+    backings: f.backings,
+    feePercentOfYield: f.feePct,
     yieldSteps: YIELD_STEPS,
+    risk: RISK,
     traits: TABLES.map((tb) => {
       const total = tb.weights.reduce((a, b) => a + b, 0);
       return { trait: tb.trait, values: tb.names.map((n, i) => ({ value: n, odds: tb.weights[i] / total })) };

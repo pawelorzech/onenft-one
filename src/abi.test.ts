@@ -25,7 +25,7 @@ test("the site's ABI matches the compiled OneCoin", async () => {
   for (const item of ABI) {
     if (item.type !== "function" && item.type !== "event" && item.type !== "error") continue;
     const found = byName.get(`${item.type}:${sig(item as AbiFunction)}`);
-    expect(`${item.type} ${sig(item as AbiFunction)}`).toBe(found ? `${item.type} ${sig(item as AbiFunction)}` : "missing from the contract");
+    expect(`${item.type} ${sig(item as AbiFunction)} ${found ? "is in the contract" : "IS MISSING from the contract"}`).toBe(`${item.type} ${sig(item as AbiFunction)} is in the contract`);
     if (item.type === "function") {
       // A call that turned payable, or the other way round, changes what the browser must send.
       // `pure` and `view` are the same to a caller, so they count as one.
@@ -46,7 +46,7 @@ test("every revert the page explains is a revert the contract can throw", async 
   const built = ((await file.json()) as { abi: Abi }).abi;
   const selectors = new Set(built.filter((a) => a.type === "error").map((a) => toFunctionSelector(sig(a as unknown as AbiFunction)) as string));
   for (const [selector, said] of REVERTS) {
-    expect(`${said} ${selectors.has(selector) ? "is thrown" : "is not in the contract"}`).toBe(`${said} is thrown`);
+    expect(`${said} [${selectors.has(selector) ? "the contract throws it" : "NO SUCH ERROR in the contract"}]`).toBe(`${said} [the contract throws it]`);
   }
   expect(REVERTS.length).toBeGreaterThan(6);
 });

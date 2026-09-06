@@ -6,10 +6,10 @@
  * /api/state and /api/holder the same way.
  */
 import { MASTERS } from "./coin.ts";
-import { chainState, chainStatus, contractEnabled, readNow, newestCoin, coinsOf, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
+import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
 import { coinOfSeed, placeholderCoin } from "./preview.ts";
 import { coinOf } from "./token.ts";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, pad5, bpsPct, type Names } from "./site.ts";
+import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
@@ -72,7 +72,7 @@ async function route(url: URL): Promise<Response> {
     const ok = !s.configured || s.known;
     return json({ ok, chain: s, keeper: keeperInfo() }, 0, ok ? 200 : 503);
   }
-  if (path === "/spec.json") return json(specJson(), 3600);
+  if (path === "/spec.json") return json(specJson(await chainState()), 3600);
   if (path === "/traits") return html(traitsPage(await chainState()));
   if (path === "/yield") return html(yieldPage(await chainState()));
   if (path === "/go") return redirect(goTarget(url.searchParams.get("who")));
@@ -109,7 +109,10 @@ async function route(url: URL): Promise<Response> {
     const newest = chain ? newestCoin(chain) : null;
     const c = newest ? coinOf(newest) : placeholderCoin();
     if (path === "/newest.svg") return svg(c.svg, false);
-    if (!newest) return png(cardPng("sealed", "ONE", "no coin minted yet", "10,000 coins a series, 50 Master Coins, every coin backed by USDC", c), false);
+    if (!newest) {
+      const f = factsOf(chain);
+      return png(cardPng(`sealed-${f.seriesSize}-${f.masters}`, "ONE", "no coin minted yet", `${num(f.seriesSize)} coins a series, ${f.masters} Master Coins, every coin backed by ${backingList(f.backings)} USDC`, c), false);
+    }
     return png(cardPng(`newest${newest.id}-${newest.yieldBps}-${newest.sealed ? 1 : 0}`, "ONE", `newest coin #${pad5(newest.id)}`, newest.sealed ? "sealed, waiting for the seed" : `${c.traits.material}, ${c.traits.field}, ${c.traits.glyph}`, c), false);
   }
 

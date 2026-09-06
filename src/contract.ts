@@ -24,20 +24,26 @@ export const CONTRACT = (process.env.CONTRACT_ADDRESS ?? "") as Address | "";
 export const CHAIN_ID = Number(process.env.CHAIN_ID ?? (CONTRACT ? 84532 : 0));
 export const chain = CHAIN_ID === 8453 ? base : baseSepolia;
 
-/** Coins in one series. The contract holds the same number; a series that fills opens the next. */
-export const SERIES_SIZE = 10000;
-/** Master Coin slots in every series' urn. */
-export const MASTERS_PER_SERIES = 50;
-/** Founder coins the author may mint per series. */
-export const FOUNDER_PER_SERIES = 50;
-/** Backing classes in whole USDC, class 0, 1, 2. Confirmed against `backingOf` on every read. */
-export const BACKINGS = [10, 25, 50] as const;
-/** The author's cut of the yield, per cent. `FEE_BPS` in the contract. */
-export const FEE_PCT = 10;
+/**
+ * The shape of a series. Every one of these is a constant in the contract, and every one of
+ * them appears in the site's copy, so the page reads them off the chain and these values are
+ * only the fallback for a server with no contract configured. Nothing here is a source of
+ * truth; `factsOf` is what the pages call.
+ */
+export const DEFAULT_SERIES_SIZE = 25000;
+export const DEFAULT_MASTERS = 50;
+export const DEFAULT_FOUNDERS = 100;
+export const DEFAULT_BACKINGS = [5, 10, 25, 50];
+/** Coins into a series after which no founder coin can be minted. */
+export const DEFAULT_FOUNDER_WINDOW = 1000;
+/** The author's cut of the yield, per cent. Read from `FEE_BPS` at boot; this is the fallback. */
+export const DEFAULT_FEE_PCT = 10;
 /** Coins one mint transaction may buy before the chain state says otherwise. */
 export const DEFAULT_MAX_BATCH = 10;
 /** How long a coin must wait after its mint before it can be burned, in seconds. Read from the contract; this is the fallback for a page with no chain. */
 export const DEFAULT_REDEEM_LOCK = 30 * 86400;
+/** How long a coin the VRF never answered for waits before its backing comes free. */
+export const DEFAULT_SEALED_ESCAPE = 180 * 86400;
 /** USDC has six decimals. */
 export const USDC_DECIMALS = 6;
 
@@ -57,11 +63,15 @@ export const ABI = parseAbi([
   "function mastersLeft(uint256 series) view returns (uint256)",
   "function backingOf(uint8 backingClass) view returns (uint256)",
   "function MAX_BATCH() view returns (uint8)",
+  "function SERIES_SIZE() view returns (uint256)",
+  "function MASTERS() view returns (uint256)",
+  "function FOUNDERS_PER_SERIES() view returns (uint256)",
   "function vrfFeeWei() view returns (uint256)",
   "function REDEEM_LOCK() view returns (uint256)",
-  "function FOUNDER_PACE() view returns (uint256)",
+  "function FOUNDER_WINDOW() view returns (uint256)",
+  "function FEE_BPS() view returns (uint256)",
   "function SEALED_ESCAPE() view returns (uint256)",
-  "function founderWindow(uint256 series) view returns (uint256 k, uint256 opensAt, uint256 closesAt, bool open)",
+  "function founderWindow(uint256 series) view returns (uint256 minted, uint256 left, uint256 closesAt, bool open)",
   "function sealedEscapeAt(uint256 id) view returns (uint256)",
   "function RETRY_BLOCKS() view returns (uint256)",
   "function ownerOf(uint256 id) view returns (address)",
@@ -80,8 +90,8 @@ export const ABI = parseAbi([
   "event Redeemed(uint256 indexed id, address indexed to, uint256 assets, uint256 fee)",
   // The reverts a minter or a holder can meet. The browser matches them by selector and says
   // what happened in words; without them a wallet shows four bytes of hex.
-  "error FounderTooEarly(uint256 series, uint256 k, uint256 opensAt)",
-  "error FounderBandMissed(uint256 series, uint256 k, uint256 closedAt)",
+  "error FounderWindowClosed(uint256 series, uint256 closedAt)",
+  "error FounderReserveFull(uint256 series, uint16 minted_, uint8 count)",
   "error VaultFull(uint256 assets, uint256 maxDeposit)",
   "error VaultIlliquid(uint256 needed, uint256 available)",
   "error TooSoon(uint256 id, uint256 redeemableAt)",
@@ -109,15 +119,23 @@ export const SELECTORS = {
 } as const;
 
 /**
+ * What ONE can cost the reader, in the author's own words. One string: the page, the mint box
+ * and the JSON all quote this, so the warning cannot say one thing here and another there.
+ */
+export const RISK = "ONE can lose you money. The backing sits in a third-party lending vault on Base; if that vault is hacked, drained or frozen, the coins hold nothing and nobody makes it up. Yield can be zero. The coins may never trade; there may be no buyers at any price. Nobody promises a return, and the odds that this earns you nothing are large. Put in only what you can lose.";
+/** The same warning in one line, for a button or a footer. */
+export const RISK_SHORT = "This can lose you money. Read what can go wrong before you mint.";
+
+/**
  * What each revert means, by selector. The wallet hands the page four bytes and nothing else,
  * so the page carries the sentence. Order does not matter; the selector is the key.
  */
 export const REVERTS: [string, string][] = [
-  ["FounderTooEarly(uint256,uint256,uint256)", "This founder coin is not open yet. Its band starts further into the series."],
-  ["FounderBandMissed(uint256,uint256,uint256)", "This founder coin's band has closed. It is forfeited, and the next one opens later in the series."],
+  ["FounderWindowClosed(uint256,uint256)", "The founder window of this series has closed. Founder coins are minted at its start or not at all."],
+  ["FounderReserveFull(uint256,uint16,uint8)", "This series has no founder coin left to mint."],
   ["VaultFull(uint256,uint256)", "The vault is not taking deposits right now. Nothing was spent beyond gas. Try again later."],
   ["VaultIlliquid(uint256,uint256)", "The vault cannot release that much right now. Your coin is untouched. Try again later."],
-  ["TooSoon(uint256,uint256)", "This coin cannot be burned yet. Thirty days must pass after its mint."],
+  ["TooSoon(uint256,uint256)", "This coin cannot be burned yet. Its lock has not run out."],
   ["SealedCoin(uint256)", "A sealed coin cannot be burned yet. Wait for its seed, or for the escape date if the seed never comes."],
   ["FeeTooLow(uint256,uint256)", "The Chainlink fee changed while this page was open. Reload it and mint again."],
   ["NothingToClaim(uint256)", "There is nothing to claim on this coin yet."],
@@ -136,7 +154,7 @@ export type CoinRecord = {
   /** The art slot, 0 to 9999; below 50 it is a Master Coin. Null while sealed. */
   slot: number | null;
   backingClass: number;
-  /** The class in whole USDC: 10, 25 or 50. */
+  /** The class in whole USDC, one of `backings`. */
   backing: number;
   founder: boolean;
   sealed: boolean;
@@ -169,8 +187,12 @@ export type CoinRecord = {
   owner: Address | null;
 };
 
-/** The band the author's next founder coin must be minted in. `open` is the contract's own answer, not ours. */
-export type FounderWindow = { k: number; opensAt: number; closesAt: number; open: boolean };
+/**
+ * The author's founder coins for a series: how many are out, how many are left, the last coin
+ * of the series at which any can still be minted, and whether the window is open right now.
+ * `open` is the contract's own answer, not ours.
+ */
+export type FounderWindow = { minted: number; left: number; closesAt: number; open: boolean };
 
 export type ChainState = {
   address: Address;
@@ -199,14 +221,24 @@ export type ChainState = {
   foundersFunded: boolean;
   /** The author's unwithdrawn fee, in USDC units. */
   treasuryAssets: bigint;
+  /** Coins in one series, from the contract. */
+  seriesSize: number;
+  /** Master Coin slots in a series' urn, from the contract. */
+  masters: number;
+  /** Founder coins the author may mint per series, from the contract. */
+  foundersPerSeries: number;
   /** Coins one transaction may mint. */
   maxBatch: number;
   /** Seconds a coin must wait after its mint before it can be burned. */
   redeemLock: number;
   /** The ETH a mint must send on to the Chainlink subscription, in wei. One fee per transaction, whatever the count. */
   vrfFeeWei: bigint;
-  /** Coins of a series in one founder band. Band k runs from coin `pace * (k - 1) + 1` to `pace * k`. */
-  founderPace: number;
+  /** Coins into a series after which the founder window shuts for good. */
+  founderWindow: number;
+  /** The author's cut of the yield, per cent, from `FEE_BPS`. */
+  feePct: number;
+  /** `FEE_BPS` itself: basis points, so the fee is exact in integers. */
+  feeBps: number;
   /** Seconds a coin stays sealed before it can be burned without ever having had a seed. */
   sealedEscape: number;
   /** The position the next coin of the series will take, 1-based. */
@@ -256,8 +288,42 @@ export function scrubError(e: unknown): string {
   return m.replace(/https?:\/\/\S+/g, "[rpc]").slice(0, 200);
 }
 
-export const seriesOf = (id: number) => Math.floor((id - 1) / SERIES_SIZE) + 1;
-export const numberOf = (id: number) => ((id - 1) % SERIES_SIZE) + 1;
+/**
+ * The numbers a page needs about a series, from the chain when there is one. A page never
+ * reaches for a constant of its own: a contract deployed with a different series size or a
+ * fourth backing class must change the copy, not silently disagree with it.
+ */
+export type Facts = {
+  seriesSize: number;
+  masters: number;
+  founders: number;
+  backings: number[];
+  maxBatch: number;
+  /** The author's cut of the yield, per cent, for copy. */
+  feePct: number;
+  /** The same cut in basis points, the integer the arithmetic uses. */
+  feeBps: number;
+  /** Coins into a series after which no founder coin can be minted. */
+  founderWindow: number;
+  /** Days a coin waits after its mint before it can be burned. */
+  lockDays: number;
+  /** Days a coin the VRF never answered for waits before its backing comes free. */
+  escapeDays: number;
+};
+export function factsOf(chain: ChainState | null): Facts {
+  const d = (seconds: number) => Math.round(seconds / 86400);
+  return chain
+    ? { seriesSize: chain.seriesSize, masters: chain.masters, founders: chain.foundersPerSeries, backings: chain.backings, maxBatch: chain.maxBatch, feePct: chain.feePct, feeBps: chain.feeBps, founderWindow: chain.founderWindow, lockDays: d(chain.redeemLock), escapeDays: d(chain.sealedEscape) }
+    : { seriesSize: DEFAULT_SERIES_SIZE, masters: DEFAULT_MASTERS, founders: DEFAULT_FOUNDERS, backings: DEFAULT_BACKINGS, maxBatch: DEFAULT_MAX_BATCH, feePct: DEFAULT_FEE_PCT, feeBps: DEFAULT_FEE_PCT * 100, founderWindow: DEFAULT_FOUNDER_WINDOW, lockDays: d(DEFAULT_REDEEM_LOCK), escapeDays: d(DEFAULT_SEALED_ESCAPE) };
+}
+/** The classes as one phrase: "5, 10, 25 or 50". */
+export function backingList(backings: number[]): string {
+  return backings.length < 2 ? String(backings[0] ?? "") : `${backings.slice(0, -1).join(", ")} or ${backings[backings.length - 1]}`;
+}
+
+/** Ids are global; a series is a window of `seriesSize` of them. */
+export const seriesOfIn = (id: number, seriesSize: number) => Math.floor((id - 1) / seriesSize) + 1;
+export const numberOfIn = (id: number, seriesSize: number) => ((id - 1) % seriesSize) + 1;
 
 const coins = new Map<number, CoinRecord>();
 let allReadAt = 0;
@@ -285,14 +351,14 @@ async function multicallBatch<T>(ids: number[], fn: "coinOf" | "ownerOf"): Promi
   return out;
 }
 
-function recordOf(id: number, info: Info, owner: Address | null, backings: number[], sealedEscape: number): CoinRecord {
+function recordOf(id: number, info: Info, owner: Address | null, backings: number[], sealedEscape: number, masters: number): CoinRecord {
   const slot = info.sealed_ ? null : info.slot;
   return {
     id,
     seed: info.sealed_ ? 0n : info.seed,
     slot,
     backingClass: info.backingClass,
-    backing: backings[info.backingClass] ?? BACKINGS[info.backingClass] ?? 0,
+    backing: backings[info.backingClass] ?? DEFAULT_BACKINGS[info.backingClass] ?? 0,
     founder: info.founder,
     sealed: info.sealed_,
     renderer: info.renderer,
@@ -309,7 +375,7 @@ function recordOf(id: number, info: Info, owner: Address | null, backings: numbe
     profit: info.profit,
     lifetime: info.lifetime,
     yieldBps: Number(info.yieldBps),
-    master: slot !== null && slot < MASTERS_PER_SERIES ? slot : -1,
+    master: slot !== null && slot < masters ? slot : -1,
     owner,
   };
 }
@@ -327,17 +393,18 @@ function idsToRead(last: number, all: boolean): number[] {
 async function readChainState(): Promise<ChainState> {
   if (!client || !CONTRACT) throw new Error("no contract configured");
   const c = { address: CONTRACT, abi: ABI } as const;
-  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, redeemLock, vrfFeeWei, founderPace, sealedEscape, b0, b1, b2] = await client.multicall({
+  const [author, renderer, rendererLocked, mintedRaw, nextIdRaw, usdc, vault, treasury, foundersFunded, maxBatch, seriesSize, masters, foundersPerSeries, redeemLock, vrfFeeWei, founderWindowSize, feeBps, sealedEscape, b0, b1, b2, b3] = await client.multicall({
     contracts: [
       { ...c, functionName: "author" }, { ...c, functionName: "renderer" }, { ...c, functionName: "rendererLocked" },
       { ...c, functionName: "minted" }, { ...c, functionName: "nextId" }, { ...c, functionName: "USDC" }, { ...c, functionName: "VAULT" },
-      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" }, { ...c, functionName: "FOUNDER_PACE" }, { ...c, functionName: "SEALED_ESCAPE" },
-      { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] },
+      { ...c, functionName: "treasuryAssets" }, { ...c, functionName: "foundersFunded" }, { ...c, functionName: "MAX_BATCH" }, { ...c, functionName: "SERIES_SIZE" }, { ...c, functionName: "MASTERS" }, { ...c, functionName: "FOUNDERS_PER_SERIES" }, { ...c, functionName: "REDEEM_LOCK" }, { ...c, functionName: "vrfFeeWei" }, { ...c, functionName: "FOUNDER_WINDOW" }, { ...c, functionName: "FEE_BPS" }, { ...c, functionName: "SEALED_ESCAPE" },
+      { ...c, functionName: "backingOf", args: [0] }, { ...c, functionName: "backingOf", args: [1] }, { ...c, functionName: "backingOf", args: [2] }, { ...c, functionName: "backingOf", args: [3] },
     ],
     allowFailure: false,
   });
+  const size = Number(seriesSize);
   const last = Number(nextIdRaw) - 1;
-  const series = last >= 1 ? seriesOf(last) : 1;
+  const series = last >= 1 ? seriesOfIn(last, size) : 1;
   const [urnLeft, mastersLeft, founderMinted, window] = await client.multicall({
     contracts: [
       { ...c, functionName: "urnLeft", args: [BigInt(series)] },
@@ -347,7 +414,7 @@ async function readChainState(): Promise<ChainState> {
     ],
     allowFailure: false,
   });
-  const backings = [b0, b1, b2].map((u) => Number(u / 10n ** BigInt(USDC_DECIMALS)));
+  const backings = [b0, b1, b2, b3].map((u) => Number(u / 10n ** BigInt(USDC_DECIMALS)));
 
   const all = Date.now() - allReadAt > ALL_TTL_MS;
   const ids = idsToRead(last, all);
@@ -358,7 +425,7 @@ async function readChainState(): Promise<ChainState> {
   ids.forEach((id, i) => {
     const info = infos[i];
     if (!info) { coins.delete(id); return; }
-    coins.set(id, recordOf(id, info, owners[i] ?? null, backings, Number(sealedEscape)));
+    coins.set(id, recordOf(id, info, owners[i] ?? null, backings, Number(sealedEscape), Number(masters)));
   });
   if (all) allReadAt = Date.now();
 
@@ -376,7 +443,7 @@ async function readChainState(): Promise<ChainState> {
     minted: Number(mintedRaw),
     nextId: Number(nextIdRaw),
     series,
-    seriesMinted: Math.max(0, last - (series - 1) * SERIES_SIZE),
+    seriesMinted: Math.max(0, last - (series - 1) * size),
     pending,
     urnLeft: Number(urnLeft),
     mastersLeft: Number(mastersLeft),
@@ -384,12 +451,17 @@ async function readChainState(): Promise<ChainState> {
     foundersFunded,
     treasuryAssets: treasury,
     maxBatch: Number(maxBatch),
+    seriesSize: Number(seriesSize),
+    masters: Number(masters),
+    foundersPerSeries: Number(foundersPerSeries),
     redeemLock: Number(redeemLock),
     vrfFeeWei,
-    founderPace: Number(founderPace),
+    founderWindow: Number(founderWindowSize),
+    feePct: Number(feeBps) / 100,
+    feeBps: Number(feeBps),
     sealedEscape: Number(sealedEscape),
-    position: numberOf(Number(nextIdRaw)),
-    founder: { k: Number(window[0]), opensAt: Number(window[1]), closesAt: Number(window[2]), open: window[3] },
+    position: numberOfIn(Number(nextIdRaw), size),
+    founder: { minted: Number(window[0]), left: Number(window[1]), closesAt: Number(window[2]), open: window[3] },
     backings,
     coins,
     readAt: Date.now(),

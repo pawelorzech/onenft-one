@@ -12,7 +12,7 @@ import { stateJson, holderJson, specJson, coinJson } from "./api.ts";
 import { holderFacts } from "./facts.ts";
 import { coinOf, inputOf, metaOf } from "./token.ts";
 import { MATERIALS } from "./coin.ts";
-import { SERIES_SIZE, REVERTS, type ChainState, type ChainStatus, type CoinRecord } from "./contract.ts";
+import { DEFAULT_SERIES_SIZE as SERIES_SIZE, REVERTS, RISK, factsOf, backingList, type ChainState, type ChainStatus, type CoinRecord } from "./contract.ts";
 import type { Address } from "viem";
 
 /** A mint far enough in the past that the lock has run out, so redeem is open in the tests that want it. */
@@ -76,11 +76,16 @@ export function fakeChain(extra: Partial<ChainState> = {}): ChainState {
     maxBatch: 10,
     redeemLock: 30 * 86400,
     vrfFeeWei: 300_000_000_000_000n,
-    founderPace: 200,
+    founderWindow: 1000,
+    feePct: 10,
+    feeBps: 1000,
     sealedEscape: 180 * 86400,
     position: 4,
-    founder: { k: 1, opensAt: 1, closesAt: 200, open: true },
-    backings: [10, 25, 50],
+    founder: { minted: 1, left: 99, closesAt: 1000, open: true },
+    seriesSize: SERIES_SIZE,
+    masters: 50,
+    foundersPerSeries: 100,
+    backings: [5, 10, 25, 50],
     coins,
     readAt: Date.now(),
     ...extra,
@@ -122,8 +127,7 @@ test("home with a contract: the newest coin, the mint box, the counts from the c
   expect(h).toContain(">3</b><span class=\"small\">minted in series I");
   expect(h).toContain(">49</b><span class=\"small\">Master Coins still in the urn");
   expect(h).toContain(">1</b><span class=\"small\">sealed, waiting for a seed");
-  expect(h).toContain("10 USDC</button>");
-  expect(h).toContain("25 USDC</button>");
+  expect(h).toContain("5 USDC</button>");
   expect(h).toContain("50 USDC</button>");
   expect(h).toContain("Up to 10 in one transaction.");
   expect(h).toContain("Base Sepolia testnet");
@@ -209,26 +213,73 @@ test("the thirty day lock: burning is shut with a date until it runs out, and sh
   expect(howPage(open, OK)).toContain("30 days after its mint");
 });
 
-test("founder bands: the box reads the contract's window and shuts the button outside it", () => {
-  // Standing at coin 4, band 1 runs 1 to 200 and is open.
+test("the founder window: open at the start of a series, shut for good after it, and forfeited", () => {
   const open = homePage(fakeChain(), OK);
-  expect(open).toContain("coins 1 to 200 of series I");
-  expect(open).toContain("Open now, until coin 200. The series is at coin 4.");
-  expect(open).toContain("Mint founder coin 1");
-  expect(open).toContain("A band that closes without its coin is forfeited.");
+  expect(open).toContain("1 of 100 minted");
+  expect(open).toContain("99 left, and the window is open until coin 1,000 of series I");
+  expect(open).toContain("inside its first 1,000 coins, or not at all");
+  expect(open).toContain("Mint founder coins");
   expect(open).not.toMatch(/id="founder-btn"[^>]*disabled/);
-  // Band 1 spent at coin 40: band 2 waits for coin 201.
-  const waiting = fakeChain({ position: 41, seriesMinted: 40, founderMinted: 1, founder: { k: 2, opensAt: 201, closesAt: 400, open: false } });
-  const h = homePage(waiting, OK);
-  expect(h).toContain("Not open. It opens at coin 201, and the series is at coin 41.");
-  expect(h).toContain("Founder coin 2 opens at coin 201");
+  expect(open).toContain('max="10"');
+  // Past the window: the button shuts and the page says what was lost.
+  const shut = fakeChain({ position: 4000, seriesMinted: 3999, founder: { minted: 3, left: 97, closesAt: 1000, open: false } });
+  const h = homePage(shut, OK);
+  expect(h).toContain("Closed since coin 1,000 of series I");
+  expect(h).toContain("so the 97 not minted are forfeited");
+  expect(h).toContain("The window closed at coin 1,000");
   expect(h).toMatch(/id="founder-btn"[^>]*disabled data-shut/);
-  // A series with every band spent says so.
-  const done = fakeChain({ founderMinted: 50, founder: { k: 51, opensAt: 10001, closesAt: 10200, open: false } });
-  expect(homePage(done, OK)).toContain("Series I has all 50.");
-  // One coin per band: the browser never asks for a batch.
-  expect(open).toContain("Confirm the founder mint in your wallet: one coin");
-  expect(open).not.toContain('id="fcount"');
+  // All hundred out.
+  expect(homePage(fakeChain({ founder: { minted: 100, left: 0, closesAt: 1000, open: false } }), OK)).toContain("Series I has all 100.");
+  // The count is capped by what is left, not just by the batch.
+  expect(homePage(fakeChain({ founder: { minted: 97, left: 3, closesAt: 1000, open: true } }), OK)).toContain('max="3"');
+});
+
+test("the risk is stated on the page, under the mint button, in the sidebar, the footer and the JSON", () => {
+  const c = fakeChain();
+  const how = howPage(c, OK);
+  expect(how).toContain('id="risk"');
+  expect(how).toContain(RISK);
+  expect(how).toContain("What can go wrong");
+  const home = homePage(c, OK);
+  expect(home).toContain('href="/how#risk">Read what can go wrong</a> before you mint.');
+  // Under the mint button, in the sidebar lead and in the footer of every page.
+  expect((home.match(/how#risk/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  expect(home).toContain("This can lose you money.");
+  for (const h of [coinsPage(c, 1, OK), mastersPage(c, new Map(), OK), yieldPage(c), assetsPage(c, OK)]) {
+    expect(h).toContain("This can lose you money: read");
+  }
+  expect(stateJson(c, undefined, OK).risk).toBe(RISK);
+  expect(specJson(c).risk).toBe(RISK);
+  expect(RISK).toContain("Put in only what you can lose.");
+  expect(RISK).toContain("third-party lending vault on Base");
+});
+
+test("the series shape comes from the chain, never from a constant in the page", () => {
+  const c = fakeChain();
+  const h = homePage(c, OK);
+  expect(h).toContain("25,000 coins a series. 50 one of ones.");
+  expect(h).toContain("5, 10, 25 or 50 USDC held in a vault");
+  expect(h).toContain("a 5 USDC coin can be a Master Coin");
+  for (const b of [5, 10, 25, 50]) expect(h).toContain(`${b} USDC</button>`);
+  // A contract with a different shape moves the copy with it, and nothing is hardcoded.
+  const other = fakeChain({ seriesSize: 1000, masters: 7, foundersPerSeries: 3, backings: [1, 2] });
+  const o = homePage(other, OK);
+  expect(o).toContain("1,000 coins a series. 7 one of ones.");
+  expect(o).toContain("1 or 2 USDC held in a vault");
+  expect(o).toContain("of 3 minted");
+  // The fee, the lock and the escape follow the same rule.
+  const cheap = fakeChain({ feePct: 2.5, feeBps: 250, redeemLock: 7 * 86400, sealedEscape: 90 * 86400 });
+  expect(howPage(cheap, OK)).toContain("minus 2.5% of that yield");
+  expect(howPage(cheap, OK)).toContain("burned 7 days after its mint");
+  expect(howPage(cheap, OK)).toContain("after 90 days");
+  expect(homePage(cheap, OK)).toContain('<span class="fig syne">2.5%</span>');
+  expect(mastersPage(other, new Map(), OK)).toContain("7 Master Coins a series");
+  expect(howPage(other, OK)).toContain("A series is 1,000 coins.");
+  expect(stateJson(other, undefined, OK).seriesSize).toBe(1000);
+  expect(stateJson(other, undefined, OK).mastersPerSeries).toBe(7);
+  expect(specJson(other).backings).toEqual([1, 2]);
+  expect(backingList([5, 10, 25, 50])).toBe("5, 10, 25 or 50");
+  expect(factsOf(null).seriesSize).toBe(SERIES_SIZE);
 });
 
 test("the sealed escape: a coin the seed never reached can be burned for its backing", () => {
@@ -260,8 +311,8 @@ test("a revert the contract can throw reaches the reader as a sentence, not four
     expect(h).toContain(selector);
     expect(h).toContain(said);
   }
-  expect(h).toContain("This founder coin is not open yet");
-  expect(h).toContain("band has closed");
+  expect(h).toContain("The founder window of this series has closed");
+  expect(h).toContain("no founder coin left to mint");
   expect(h).toContain("The vault is not taking deposits right now");
   expect(coin).toContain("The vault cannot release that much right now");
   expect(coin).toContain("A sealed coin cannot be burned");
@@ -316,7 +367,9 @@ test("state json: null counts when the chain never answered, the hub's fields wh
   expect(s.series).toBe(1);
   expect(s.urnLeft).toBe(SERIES_SIZE - 2);
   expect(s.founderMinted).toBe(1);
-  expect(s.founderWindow).toEqual({ k: 1, opensAt: 1, closesAt: 200, open: true });
+  expect(s.founderWindow).toEqual({ minted: 1, left: 99, closesAt: 1000, open: true });
+  expect(s.foundersPerSeries).toBe(100);
+  expect(s.backings).toEqual([5, 10, 25, 50]);
   expect(s.position).toBe(4);
   expect(s.sealedEscapeSeconds).toBe(180 * 86400);
   expect(s.recent[0].sealedEscapeAt).toBe(s.recent[0].mintedAt + 180 * 86400);
@@ -399,10 +452,11 @@ test("coins page paginates newest first and says so when nothing is minted", () 
 });
 
 test("the spec holds the tables the generator needs", () => {
-  const s = specJson();
+  const s = specJson(fakeChain());
   expect(s.seriesSize).toBe(SERIES_SIZE);
+  expect(s.foundersPerSeries).toBe(100);
   expect(s.masters.length).toBe(50);
-  expect(s.backings).toEqual([10, 25, 50]);
+  expect(s.backings).toEqual([5, 10, 25, 50]);
   expect(s.traits.find((t) => t.trait === "Material")!.values.length).toBe(MATERIALS.length);
 });
 

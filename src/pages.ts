@@ -5,7 +5,7 @@ import {
   usdc, bpsPct, pad5, traitList, moneyBlock, coinTags, coinActions, actionScript, isAuthor, factTile, type Names, NO_NAMES,
 } from "./site.ts";
 import { whoBlock, connectScript, downloadScript, downloadBar, sizePicker, nameHeading } from "./wallet.ts";
-import { SERIES_SIZE, MASTERS_PER_SERIES, BACKINGS, coinsOf, explorer, openseaCoin, openseaWallet, type ChainState, type ChainStatus } from "./contract.ts";
+import { factsOf, coinsOf, explorer, openseaCoin, openseaWallet, type ChainState, type ChainStatus } from "./contract.ts";
 import { coinOf } from "./token.ts";
 import { holderFacts } from "./facts.ts";
 
@@ -27,6 +27,7 @@ ${connectScript("/", true)}`;
 
 /** One wallet: its coins, what they hold, and the two things its owner can do with each. */
 export function holderPage(chain: ChainState, who: Address, handle: string, names: Names = NO_NAMES, status: ChainStatus | null = null): string {
+  const f = factsOf(chain);
   const rawName = names.get(who.toLowerCase()) ?? shortAddr(who);
   const mine = coinsOf(chain, who);
   const facts = holderFacts(who, chain);
@@ -39,8 +40,8 @@ export function holderPage(chain: ChainState, who: Address, handle: string, name
 <div class="meta">
 <div class="num syne">#${pad5(c.id)}${coinTags(coin, c)}</div>
 <p class="small" style="margin:0">${c.sealed ? "sealed, waiting for the seed from Chainlink VRF" : coin.masterName ? `Master Coin ${esc(coin.masterName)}` : esc(coin.traits.material)}, series ${c.series}, ${c.backing} USDC class, yield ${bpsPct(c.yieldBps)}</p>
-${traitList(coin, c.sealed)}
-${moneyBlock(c, coin.yieldLevel)}
+${traitList(coin, c.sealed, f)}
+${moneyBlock(c, coin.yieldLevel, f)}
 ${coinActions(chain, c)}
 <p class="small" style="margin:0">${links}.</p>
 ${downloadBar(c.id, coin.palette.bg)}
@@ -63,6 +64,7 @@ ${rows.length ? `${downloadScript()}${actionScript(chain)}` : ""}`;
 }
 
 export function assetsPage(chain: ChainState | null, status: ChainStatus | null = null): string {
+  const f = factsOf(chain);
   const img = esc(`<img src="https://${SITE}/coin/1.svg" width="256" height="256" alt="Coin 00001 of one.onenft.click" style="image-rendering:pixelated">`);
   const where = chain
     ? `Token contract <a href="${explorer(chain.chainId)}/address/${chain.address}">${chain.address}</a>, renderer <a href="${explorer(chain.chainId)}/address/${chain.renderer}">${chain.renderer}</a>.`
@@ -77,10 +79,10 @@ ${topBar("Assets")}
 <p>Any coin as SVG at <code>/coin/N.svg</code>, as a 1024 pixel PNG at <code>/coin/N-1024.png</code>, and as a 1200 by 630 link card at <code>/coin/N.png</code>. The same coin at any yield level at <code>/coin/N.svg?yield=BPS</code>, any seed at <code>/preview/HEX.svg</code>, and each Master Coin with a sample seed at <code>/master/I.svg</code>. The SVG is the same file the contract holds: a 64 by 64 grid, one path per colour. Render it with <code>image-rendering: pixelated</code> so the pixels stay square.</p>
 <pre class="snip">${img}</pre>
 <h2 class="syne">Data</h2>
-<p><a href="/api/state">/api/state</a> gives the series, the supply, the Master Coins left and the newest coins. <code>/api/coin/N</code> returns one coin: seed, fingerprint, traits, rarity, backing, yield, holder, image links. <code>/api/holder/ADDRESS</code> lists one wallet's coins. <a href="/spec.json">/spec.json</a> holds the trait tables with their odds, the yield levels, the ${MASTERS_PER_SERIES} Master Coin names and modes, and the backing classes ${BACKINGS.join(", ")}, so you can port the generator. Every answer carries a <code>chain</code> block that says how old the numbers are. All JSON, open to any origin. The metadata a marketplace reads comes from the contract's own <code>tokenURI</code>, not from here.</p>
+<p><a href="/api/state">/api/state</a> gives the series, the supply, the Master Coins left and the newest coins. <code>/api/coin/N</code> returns one coin: seed, fingerprint, traits, rarity, backing, yield, holder, image links. <code>/api/holder/ADDRESS</code> lists one wallet's coins. <a href="/spec.json">/spec.json</a> holds the trait tables with their odds, the yield levels, the ${f.masters} Master Coin names and modes, and the backing classes ${f.backings.join(", ")}, so you can port the generator. Every answer carries a <code>chain</code> block that says how old the numbers are. All JSON, open to any origin. The metadata a marketplace reads comes from the contract's own <code>tokenURI</code>, not from here.</p>
 <h2 class="syne">Code and contract</h2>
 <p>The generator in TypeScript and Solidity, the site and the contracts: <a href="${REPO}">${REPO.replace("https://", "")}</a>. ${where} Every collection: <a href="https://${PARENT}">${PARENT}</a>.</p>
-<p class="small">A series is ${num(SERIES_SIZE)} coins. <a href="/">Back to the coins</a></p>
+<p class="small">A series is ${num(f.seriesSize)} coins. <a href="/">Back to the coins</a></p>
 ${footer()}
 </main>`;
   return layout(`Assets | ${NAME}`, pageColors(chain), body, "/newest.png", "/assets");
