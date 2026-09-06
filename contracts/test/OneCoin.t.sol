@@ -822,8 +822,9 @@ contract OneCoinTest is Test {
         uint256 nav = token.nav(id);
         uint256 gain = nav - 50e6;
         uint256 fee = gain * 1000 / 10000;
-        uint256 feeShares = (shares * fee + nav - 1) / nav; // the fee rounds up, to the author
         uint256 outShares = shares * (gain - fee) / nav;
+        // The fee is a ninth of what the holder got, rounded up, so the odd unit goes to the author.
+        uint256 feeShares = (outShares * 1000 + 8999) / 9000;
 
         vm.prank(holder);
         uint256 paid = token.claim(id);
@@ -832,7 +833,10 @@ contract OneCoinTest is Test {
         assertApproxEqAbs(paid, gain - fee, 2, "the owner got the yield less ten percent");
         assertEq(token.treasuryShares(), feeShares, "the fee stayed as treasury shares");
         assertEq(token.sharesOf(id), shares - feeShares - outShares);
-        assertEq(token.coinOf(id).claimed, gain);
+        // `claimed` is a record of money that moved, so it is the payout plus the fee, which can
+        // sit a unit above the gain on paper because the fee rounds up.
+        assertEq(token.coinOf(id).claimed, paid + vault.convertToAssets(token.treasuryShares()));
+        assertApproxEqAbs(token.coinOf(id).claimed, gain, 2);
         assertApproxEqAbs(token.nav(id), 50e6, 2, "the backing is still there");
         assertLe(token.profit(id), 2, "nothing left to claim but rounding dust");
     }
@@ -1257,6 +1261,37 @@ contract OneCoinTest is Test {
         assertGt(token.redeem(id), 0);
     }
 
+    /// @dev The auditor's case. A coin worth 70 on a principal of 50 owes the holder 18 and the
+    /// author 2. If the vault can only free part of it, the fee must follow what was released,
+    /// or the part left behind is charged ten percent again on the next claim.
+    function test_APartialClaimDoesNotChargeTheFeeTwiceOnTheSameGain() public {
+        uint256 id = _buy(buyer, 2, 1, holder);
+        _reveal(_lastRequest(), 1);
+        vault.gain(20e6);
+        assertApproxEqAbs(token.nav(id), 70e6, 2, "principal 50, nav 70");
+        assertApproxEqAbs(token.profit(id), 20e6, 2);
+
+        // The vault frees a tenth of what the coin holds, so the first claim is part paid.
+        vault.setRedeemCap(token.sharesOf(id) / 10);
+        vm.prank(holder);
+        uint256 first = token.claim(id);
+        assertGt(first, 0);
+        assertLt(first, 18e6, "only part of it came out");
+
+        // Then the vault opens up and the rest follows.
+        vault.setRedeemCap(type(uint256).max);
+        vm.prank(holder);
+        uint256 second = token.claim(id);
+
+        uint256 toHolder = first + second;
+        uint256 toAuthor = vault.convertToAssets(token.treasuryShares());
+        assertApproxEqAbs(toHolder, 18e6, 3, "the holder ends with eighteen");
+        assertApproxEqAbs(toAuthor, 2e6, 3, "and the author with two");
+        assertApproxEqAbs(toHolder + toAuthor, 20e6, 3, "which is the whole gain, charged once");
+        assertEq(usdc.balanceOf(holder), toHolder);
+        assertApproxEqAbs(token.nav(id), 50e6, 3, "the backing is untouched");
+    }
+
     // ---- what is booked is what moved ----
 
     function test_LifetimeNeverExceedsWhatWasPaidOutPlusTheFee() public {
@@ -1293,11 +1328,11 @@ contract OneCoinTest is Test {
         vault.gain(7_777_777);
         uint256 nav = token.nav(id);
         uint256 gain = nav - 50e6;
-        uint256 fee = gain * 1000 / 10000;
+        uint256 outShares = shares * (gain - gain * 1000 / 10000) / nav;
 
         vm.prank(holder);
         token.claim(id);
-        assertEq(token.treasuryShares(), (shares * fee + nav - 1) / nav, "the fee took the rounding unit");
+        assertEq(token.treasuryShares(), (outShares * 1000 + 8999) / 9000, "the fee took the rounding unit");
     }
 
     // ---- ownership cannot move at all ----
@@ -1308,6 +1343,59 @@ contract OneCoinTest is Test {
         token.transferOwnership(stranger);
         assertEq(token.owner(), author);
         assertEq(token.author(), author, "owner and author are the same person for good");
+    }
+
+    // ---- the way out of a dropped VRF request ----
+
+    function test_ASealedCoinCanBeBurnedAfterHalfAYear() public {
+        uint256 id = _buy(buyer, 2, 1, holder);
+        uint256 escape = token.mintedAt(id) + token.SEALED_ESCAPE();
+        assertEq(token.sealedEscapeAt(id), escape);
+        assertEq(token.SEALED_ESCAPE(), 180 days);
+
+        // One day short of half a year it is still sealed shut.
+        vm.warp(escape - 1 days);
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(OneCoin.SealedCoin.selector, id));
+        token.redeem(id);
+
+        // One second short.
+        vm.warp(escape - 1);
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(OneCoin.SealedCoin.selector, id));
+        token.redeem(id);
+
+        // And then the door opens and the backing comes home.
+        vm.warp(escape);
+        vm.prank(holder);
+        uint256 assets = token.redeem(id);
+        assertApproxEqAbs(assets, 50e6, 2, "the principal, with no art and no fee");
+        assertEq(usdc.balanceOf(holder), assets);
+        assertEq(token.treasuryShares(), 0, "no yield, so no fee");
+    }
+
+    /// @dev The escape lets a sealed coin be burned, so a late answer can now arrive for a batch
+    /// whose first coin is gone. What the batch costs the urn was fixed at its mint and must not
+    /// change, or the old steering hole reopens on a six month delay.
+    function test_ALateAnswerStillCostsTheUrnTheWholeBatchAfterAnEscape() public {
+        uint256 firstId = _buy(buyer, 0, 3, holder);
+        uint256 rid = _lastRequest();
+
+        vm.warp(block.timestamp + token.SEALED_ESCAPE());
+        vm.prank(holder);
+        token.redeem(firstId);
+        vm.prank(holder);
+        token.redeem(firstId + 1);
+        assertEq(token.balanceOf(holder), 1, "two of the three are gone");
+
+        uint256[] memory words = new uint256[](3);
+        words[0] = uint256(100) << 64;
+        words[1] = uint256(200) << 64;
+        words[2] = uint256(300) << 64;
+        vrf.fulfill(rid, words);
+
+        assertEq(token.urnLeft(1), 9997, "three ids, three draws, however many coins survived");
+        assertEq(token.slotOf(firstId + 2), 300 % 9998, "and the survivor got the slot it was owed");
     }
 
     // ---- founder funding ----

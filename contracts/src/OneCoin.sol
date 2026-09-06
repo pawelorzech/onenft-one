@@ -30,7 +30,11 @@ import {ICoinRenderer, CoinView} from "./ICoinRenderer.sol";
 /// steer them. A coin is sealed between its mint and the VRF answer; `retry` reopens a
 /// request the coordinator never answered, so no coin can stay sealed forever.
 ///
-/// A coin cannot be redeemed while it is sealed, and not for thirty days after its mint. The
+/// A coin cannot be redeemed for thirty days after its mint, and not while it is sealed unless
+/// half a year has passed. That second door is for the day Chainlink drops a request: the
+/// coordinator treats it as pending forever and will not release the subscription, so without a
+/// way out that batch's USDC would be stranded. After half a year no answer is on its way and
+/// there is nothing left to steer. The
 /// first rule is what stops a holder from watching Chainlink's answer in the mempool and burning
 /// chosen sealed coins of a batch to push the coins behind them onto a master slot. The second,
 /// with the randomness fee the minter pays in ETH at mint, is what stops a bot from cycling the
@@ -91,6 +95,11 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     /// @notice How long after its mint a coin has to wait before it can be burned. Claiming the
     /// yield is open the whole time; this stops churn, not withdrawal.
     uint256 public constant REDEEM_LOCK = 30 days;
+    /// @notice After this long a coin can be burned even if the VRF never answered for it. The
+    /// coordinator counts an unfulfilled request as pending and will not let a subscription
+    /// migrate or a consumer leave while one is open, so without this door a request the node
+    /// drops would put that batch's USDC out of reach for good.
+    uint256 public constant SEALED_ESCAPE = 180 days;
     /// @notice VRF is paid in native ETH from the subscription, not in LINK.
     bool public constant NATIVE_PAYMENT = true;
     /// @notice `slot` of a coin the VRF has not answered for yet.
@@ -604,17 +613,20 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         uint256 gain = nav_ > principal ? nav_ - principal : 0;
         if (gain == 0) revert NothingToClaim(id);
 
-        uint256 fee = gain * FEE_BPS / BPS;
-        uint256 feeShares = _sharesForUp(shares, nav_, fee);
-        uint256 outShares = _sharesFor(shares, nav_, gain - fee);
+        // The holder's ninety percent of the whole gain, before the vault has its say.
+        uint256 wantShares = _sharesFor(shares, nav_, gain - gain * FEE_BPS / BPS);
         // The vault may not be able to hand it all back today. Take what it can and leave the
         // rest earning; the holder comes back for it. This is why the payout is capped rather
         // than reverted: a claim is not a burn and nothing is lost by waiting.
         uint256 available = VAULT.maxRedeem(address(this));
-        if (outShares > available) outShares = available;
+        uint256 outShares = wantShares > available ? available : wantShares;
         // A gain too small to be worth a single share would pay nothing while still raising
         // `claimed`, and the same gain could be claimed again and again. Wait for a real one.
         if (outShares == 0) revert NothingToClaim(id);
+        // The fee is a ninth of what the holder actually got, which is ten percent of the gain
+        // released. Taking ten percent of the gain on paper would charge the part the vault
+        // could not free, and charge it again on the next claim.
+        uint256 feeShares = (outShares * FEE_BPS + (BPS - FEE_BPS) - 1) / (BPS - FEE_BPS);
         // The fee never eats into what the coin keeps beyond its own share of the gain.
         if (feeShares + outShares > shares) feeShares = shares - outShares;
         uint256 feeAssets = VAULT.convertToAssets(feeShares);
@@ -647,10 +659,13 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     function redeem(uint256 id) external nonReentrant returns (uint256 assets) {
         address to = _requireAuthorized(id);
         Coin storage c = _coins[id];
-        // A sealed coin stays put. Burning one would take an urn draw out of a batch whose
-        // random words are already public in the mempool, and that is how a holder would steer
-        // the coins behind it onto a master slot.
-        if (c.slot == SEALED_SLOT) revert SealedCoin(id);
+        // A sealed coin stays put, at first. Burning one early is how a holder would steer the
+        // coins behind it: the random words are public in the mempool before they land. After
+        // SEALED_ESCAPE no answer is coming, there is nothing left to steer, and the money must
+        // not be trapped by a request the node dropped.
+        if (c.slot == SEALED_SLOT && block.timestamp < uint256(c.mintedAt) + SEALED_ESCAPE) {
+            revert SealedCoin(id);
+        }
         uint256 ready = uint256(c.mintedAt) + REDEEM_LOCK;
         if (block.timestamp < ready) revert TooSoon(id, ready);
         uint256 shares = c.shares;
@@ -666,7 +681,14 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
         uint256 available = VAULT.maxRedeem(address(this));
         if (outShares > available) revert VaultIlliquid(outShares, available);
 
-        delete _coins[id];
+        // Zero the money, keep the art. `fulfillRandomWords` reads the first coin of a batch to
+        // tell whether the batch was answered, and after SEALED_ESCAPE that coin can be gone; a
+        // `delete` here would read back as answered and a late reply would draw nothing for the
+        // whole batch. What a batch costs the urn is fixed at mint and stays fixed.
+        c.shares = 0;
+        c.principal = 0;
+        c.claimed = 0;
+        c.requestId = 0;
         _burn(id);
         treasuryShares += feeShares;
 
@@ -911,6 +933,12 @@ contract OneCoin is ERC721, Ownable, ReentrancyGuard, VRFConsumerV2Plus {
     function redeemableAt(uint256 id) public view returns (uint256) {
         _requireOwned(id);
         return uint256(_coins[id].mintedAt) + REDEEM_LOCK;
+    }
+
+    /// @return the first unix time the coin can be burned even if it never got its art
+    function sealedEscapeAt(uint256 id) public view returns (uint256) {
+        _requireOwned(id);
+        return uint256(_coins[id].mintedAt) + SEALED_ESCAPE;
     }
 
     /// @return the vault shares the coin holds
