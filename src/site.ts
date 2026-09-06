@@ -335,8 +335,17 @@ export function menu(extra: [string, string][] = []): string {
 export function topBar(current?: string): string {
   return `<div class="top">${crumb(current)}<nav aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav></div>`;
 }
+/** The token's OpenSea and Basescan pages, when a contract is configured. */
+export function chainLinks(): string {
+  const a = process.env.CONTRACT_ADDRESS;
+  const id = Number(process.env.CHAIN_ID ?? 0);
+  if (!a) return "";
+  const os = id === 8453 ? `https://opensea.io/assets/base/${a}/1` : `https://testnets.opensea.io/assets/base_sepolia/${a}/1`;
+  const scan = id === 8453 ? `https://basescan.org/address/${a}` : `https://sepolia.basescan.org/address/${a}`;
+  return `<a href="${os}">OpenSea</a><a href="${scan}">Contract</a>`;
+}
 export function footer(): string {
-  return `<footer><nav aria-label="Footer">${menu()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. This can lose you money: read <a href="/how#risk">what can go wrong</a> and <a href="/how">how it works</a> before you mint.</span></footer>`;
+  return `<footer><nav aria-label="Footer">${menu()}${chainLinks()}<a href="/api/state">JSON</a><a href="${REPO}">Source</a><a href="https://${PARENT}">${PARENT}</a></nav><span>CC0. Not an investment product. This can lose you money: read <a href="/how#risk">what can go wrong</a> and <a href="/how">how it works</a> before you mint.</span></footer>`;
 }
 export const STEP_KEYS = `<script>
 (function(){document.addEventListener('keydown',function(e){if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;var t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;var a=e.key==='ArrowLeft'?document.querySelector('a[rel=prev]'):e.key==='ArrowRight'?document.querySelector('a[rel=next]'):null;if(a){e.preventDefault();location.href=a.href}})})();
