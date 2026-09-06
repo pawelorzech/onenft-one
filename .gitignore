@@ -5,3 +5,4 @@ contracts/cache/
 contracts/broadcast/
 CLAUDE.local.md
 out/
+contracts/lib/**/node_modules/

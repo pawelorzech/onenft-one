@@ -357,6 +357,8 @@ export type CoinInput = {
   /** Master coin index (0..49) or -1. */
   master: number;
   founder: boolean;
+  /** True between the mint and the VRF answer: no seed yet, the coin is drawn sealed. */
+  sealed?: boolean;
 };
 
 export type Coin = {
@@ -382,6 +384,7 @@ function groundColor(ground: Ground, m: Material): string {
 }
 
 export function renderCoin(input: CoinInput): Coin {
+  if (input.sealed) return renderSealed(input);
   const design = designOf(input.seed);
   if (input.master >= 0) return renderMaster(input, design);
   const traits = traitsOf(design);
@@ -622,10 +625,33 @@ function fingerprintTicks(grid: Grid, seed: bigint) {
   }
 }
 
-/** Top: ONE, series, backing. Bottom: number and fingerprint. Each on a cleared band. */
+/** Top: ONE, series, backing. Bottom: number and fingerprint, or SEALED before the seed exists. Each on a cleared band. */
 function legend(grid: Grid, input: CoinInput, slot: number) {
   band(grid, `ONE ${roman(input.series)} ${input.backing}`, 1, slot);
-  band(grid, `${String(input.number).padStart(5, "0")} ${fingerprint(input.seed)}`, 58, slot);
+  band(grid, `${String(input.number).padStart(5, "0")} ${input.sealed ? "SEALED" : fingerprint(input.seed)}`, 58, slot);
+}
+
+/**
+ * A coin whose seed has not arrived: iron, smooth rim, full core, no glyph,
+ * no ticks, the yield ring as it stands. The same for every sealed coin.
+ */
+function renderSealed(input: CoinInput): Coin {
+  const m = MATERIALS[4];
+  const colors = ["#0d0d10", m.base, m.light, m.dark, m.ink, m.light, "#ffffff"];
+  const grid = new Grid();
+  const level = yieldLevel(input.yieldBps);
+  const design = designOf(0n);
+  const quiet: Traits = { ...traitsOf(design), halo: "None", anomaly: "None", rim: "Smooth", surface: "Matte", symmetry: "Quad" };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const p = pixel(x, y, "Quad");
+    let c: number;
+    if (!inCoin(p)) c = outside(p, design, quiet, level);
+    else if (p.r >= RADIUS - 3) c = rimPixel(p, design, quiet);
+    else c = p.r === CORE ? SLOT.dark : SLOT.body;
+    grid.set(x, y, c);
+  }
+  legend(grid, input, SLOT.light);
+  return { svg: svgOf(grid, colors), traits: quiet, design, grid, colors, palette: { bg: colors[0], fg: colors[2] }, masterName: "", yieldLevel: level };
 }
 
 function band(grid: Grid, text: string, y: number, slot: number) {
