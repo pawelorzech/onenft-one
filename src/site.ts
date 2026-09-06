@@ -11,7 +11,7 @@ import {
   CORES, CORE_WEIGHTS, GLYPHS, GLYPH_WEIGHTS, SURFACES, SURFACE_WEIGHTS, HALOS, HALO_WEIGHTS, ACCENTS, ACCENT_WEIGHTS,
   ANOMALIES, ANOMALY_WEIGHTS, MASTERS, YIELD_STEPS, fingerprint, roman, type Coin, type Traits,
 } from "./coin.ts";
-import { SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, PREVIEW_SUPPLY, previewCoin, previewInput, mastersFound } from "./preview.ts";
+import { SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, PREVIEW_SUPPLY, previewCoin, previewInput, mastersFound, placeholderCoin } from "./preview.ts";
 import { sizePicker, downloadBar, downloadScript } from "./wallet.ts";
 
 export const SITE = "one.onenft.click";
@@ -374,7 +374,7 @@ export function coinRow(n: number): string {
 // ---- pages
 
 export function pageColors(): Colors {
-  return PREVIEW_SUPPLY > 0 ? previewCoin(PREVIEW_SUPPLY).palette : { bg: "#0d0d10", fg: "#eef0f3" };
+  return PREVIEW_SUPPLY > 0 ? previewCoin(PREVIEW_SUPPLY).palette : placeholderCoin().palette;
 }
 
 export function sidebar(current?: string): string {
@@ -387,7 +387,7 @@ ${crumb(current)}
 <ul class="facts">
 <li><span class="fig syne">${roman(1)}</span><span class="lab">series, ${num(SERIES_SIZE)} coins each, series without end</span></li>
 <li><span class="fig syne">${PREVIEW ? 0 : num(PREVIEW_SUPPLY)}</span><span class="lab">of ${num(SERIES_SIZE)} minted${PREVIEW ? "; minting opens with the contract" : ""}</span></li>
-<li><span class="fig syne">${PREVIEW ? 0 : found} of ${MASTERS_PER_SERIES}</span><span class="lab">Master Coins found${PREVIEW ? ` (${found} in the ${num(PREVIEW_SUPPLY)} preview coins)` : " so far"}</span></li>
+<li><span class="fig syne">${PREVIEW ? 0 : found} of ${MASTERS_PER_SERIES}</span><span class="lab">Master Coins found${PREVIEW && PREVIEW_SUPPLY ? ` (${found} in the ${num(PREVIEW_SUPPLY)} preview coins)` : " so far"}</span></li>
 <li><span class="fig syne">${FEE_PCT}%</span><span class="lab">of the yield goes to the author; nothing else does</span></li>
 </ul>
 <nav class="nav" aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav>
@@ -397,6 +397,7 @@ ${crumb(current)}
 export function homePage(): string {
   const p = pageColors();
   const newest = PREVIEW_SUPPLY;
+  if (newest === 0) return emptyHome(p);
   const rows = Array.from({ length: Math.min(40, newest) }, (_, i) => coinRow(newest - i)).join("");
   const c = previewCoin(newest);
   const inp = previewInput(newest);
@@ -418,7 +419,27 @@ ${footer()}
   return layout(`${NAME} | ${DESC.split(".")[0]}`, p, body);
 }
 
+/** Before the first mint: the sealed coin, the numbers, and the door to the rest. */
+function emptyHome(p: Colors): string {
+  const body = `<div class="page">${sidebar()}<main id="main">
+${previewNote()}
+<section class="hero"><img class="coinimg px" src="/newest.svg" alt="A sealed coin" width="396" height="396"><div class="meta">
+<span class="small">No coin minted yet</span>
+<span class="num syne">#00001</span>
+<p>The first coin of series ${roman(1)} is still in the urn. Between the mint and the answer from Chainlink VRF a coin looks like this, sealed, with no seed yet; then it opens. See the <a href="/masters">${MASTERS_PER_SERIES} Master Coins</a>, the <a href="/traits">traits and their odds</a>, the <a href="/yield">yield ring</a>, or <a href="/how">how it works</a>.</p>
+${moneyBlock({ backing: BACKINGS[1], yieldBps: 0 }, 0)}
+</div></section>
+<div class="counts"><div><b class="syne">0</b><span class="small">minted</span></div><div><b class="syne">${num(SERIES_SIZE)}</b><span class="small">left in series ${roman(1)}</span></div><div><b class="syne">${MASTERS_PER_SERIES}</b><span class="small">Master Coins in the urn</span></div></div>
+${footer()}
+</main></div>`;
+  return layout(`${NAME} | ${DESC.split(".")[0]}`, p, body);
+}
+
 export function coinsPage(page: number): string {
+  if (PREVIEW_SUPPLY === 0) {
+    const body = `<main id="main" class="wide">${topBar("All coins")}${previewNote()}<h2 class="syne">No coins yet</h2><p>Nothing is minted. The first coin will appear here. Until then, see the <a href="/masters">Master Coins</a> and the <a href="/traits">traits</a>.</p>${footer()}</main>`;
+    return layout(`All coins | ${NAME}`, pageColors(), body, "/newest.png", "/coins");
+  }
   const p = pageColors();
   const per = 60;
   const pages = Math.max(1, Math.ceil(PREVIEW_SUPPLY / per));
@@ -490,13 +511,13 @@ ${footer()}</main>`;
 
 export function yieldPage(): string {
   const p = pageColors();
-  const n = Math.max(1, PREVIEW_SUPPLY);
-  const cells = [0, ...YIELD_STEPS].map((bps, level) => `<div class="px"><img src="/coin/${n}.svg?yield=${bps}" alt="Level ${level}" loading="lazy"><div class="cap"><b>Level ${level}</b> from ${bpsPct(bps)}</div></div>`);
+  const sample = "79db4ac1deadbeef";
+  const cells = [0, ...YIELD_STEPS].map((bps, level) => `<div class="px"><img src="/preview/${sample}.svg?yield=${bps}" alt="Level ${level}" loading="lazy"><div class="cap"><b>Level ${level}</b> from ${bpsPct(bps)}</div></div>`);
   const body = `<main id="main" class="wide">${topBar("Yield ring")}
 <h2 class="syne">The coin ages with its capital</h2>
 <p>The centre of a coin never changes. Around it the renderer reads one number from the contract: lifetime yield over backing, in basis points. Claiming yield does not lower it; selling the coin does not reset it. It only goes up, and the ring follows it through ${YIELD_STEPS.length} levels: one orbit each for the first four, then the orbits fill in, then sparks between them, then the orbits take the accent colour.</p>
 <div class="levels">${cells.join("")}</div>
-<p class="small">Shown on coin #${pad5(n)}. The levels start at ${YIELD_STEPS.map(bpsPct).join(", ")} of lifetime yield.</p>
+<p class="small">Shown on a sample seed, ${sample.toUpperCase().slice(0, 8)}. The levels start at ${YIELD_STEPS.map(bpsPct).join(", ")} of lifetime yield.</p>
 ${footer()}</main>`;
   return layout(`Yield ring | ${NAME}`, p, body, "/newest.png", "/yield");
 }

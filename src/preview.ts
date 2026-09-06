@@ -12,8 +12,12 @@ export const FOUNDER_PER_SERIES = 50;
 export const BACKINGS = [10, 25, 50] as const;
 
 const SALT = BigInt(process.env.PREVIEW_SALT ?? "2026");
-/** How many coins the preview shows as minted. */
-export const PREVIEW_SUPPLY = Math.min(SERIES_SIZE, Math.max(0, Number(process.env.PREVIEW_SUPPLY ?? 240)));
+/** How many simulated coins the site shows. Zero in production (Paweł, 2026-09-06: the site stays empty until the first real mint, like the sisters); tests set 240. */
+export const PREVIEW_SUPPLY = Math.min(SERIES_SIZE, Math.max(0, Number(process.env.PREVIEW_SUPPLY ?? 0)));
+/** A sealed coin as the stand-in image while nothing exists. */
+export function placeholderCoin(): Coin {
+  return renderCoin({ seed: 0n, number: 1, series: 1, backing: 25, yieldBps: 0, master: -1, founder: false, sealed: true });
+}
 
 /** Lazy Fisher-Yates over the series' slots; slot < 50 is a master. Computed once, in mint order. */
 const slots: number[] = [];

@@ -4,7 +4,7 @@
  * /api/state and /api/coin/<n> the same way.
  */
 import { MASTERS } from "./coin.ts";
-import { PREVIEW_SUPPLY, previewCoin, previewInput, coinOfSeed } from "./preview.ts";
+import { PREVIEW_SUPPLY, previewCoin, previewInput, coinOfSeed, placeholderCoin } from "./preview.ts";
 import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, pad5, bpsPct } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
@@ -71,9 +71,9 @@ async function route(url: URL): Promise<Response> {
 
   // The newest coin as the site's own image.
   if (path === "/newest.svg" || path === "/newest.png") {
-    if (PREVIEW_SUPPLY < 1) return text("no coins yet", 404);
-    const c = previewCoin(PREVIEW_SUPPLY);
+    const c = PREVIEW_SUPPLY < 1 ? placeholderCoin() : previewCoin(PREVIEW_SUPPLY);
     if (path === "/newest.svg") return svg(c.svg, false);
+    if (PREVIEW_SUPPLY < 1) return png(cardPng("sealed", "ONE", "no coin minted yet", "10,000 coins a series, 50 Master Coins, every coin backed by USDC", c), false);
     return png(cardPng(`newest${PREVIEW_SUPPLY}`, "ONE", `newest coin #${pad5(PREVIEW_SUPPLY)}`, `${c.traits.material}, ${c.traits.field}, ${c.traits.glyph}`, c), false);
   }
 
