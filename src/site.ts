@@ -181,6 +181,7 @@ footer nav,.nav{display:flex;gap:6px 20px;flex-wrap:wrap}
 .prose{max-width:680px;padding:38px 34px;display:flex;flex-direction:column;gap:22px}
 .prose h2{margin-top:22px}
 .prose p,.prose ul{margin:0}
+.prose a{overflow-wrap:anywhere}
 .prose code{font-family:ui-monospace,Menlo,monospace;font-size:.92em}
 .single{padding:38px 34px;display:flex;flex-direction:column;gap:22px;max-width:760px}
 .single .coinimg{width:100%;max-width:512px;aspect-ratio:1;box-shadow:0 0 0 1px var(--line);display:block}
