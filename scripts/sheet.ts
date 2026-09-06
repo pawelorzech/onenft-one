@@ -24,7 +24,7 @@ function grid(svgs: string[], cols: number, cell: number, name: string) {
     const x = (i % cols) * cell;
     const y = Math.floor(i / cols) * cell;
     const body = svg.replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "").replace(/id="(\w+)"/g, `id="c${i}$1"`).replace(/href="#(\w+)"/g, `href="#c${i}$1"`).replace(/url\(#(\w+)\)/g, `url(#c${i}$1)`);
-    inner += `<svg x="${x}" y="${y}" width="${cell}" height="${cell}" viewBox="0 0 1000 1000">${body}</svg>`;
+    inner += `<svg x="${x}" y="${y}" width="${cell}" height="${cell}" viewBox="0 0 64 64" shape-rendering="crispEdges">${body}</svg>`;
   });
   const sheet = `<svg xmlns="http://www.w3.org/2000/svg" width="${cols * cell}" height="${rows * cell}" viewBox="0 0 ${cols * cell} ${rows * cell}">${inner}</svg>`;
   writeFileSync(`out/${name}.png`, png(sheet, cols * cell));
@@ -41,22 +41,22 @@ if (what === "coins") {
   for (let i = start; i < start + count; i++) {
     svgs.push(renderCoin({ seed: seedAt(i), number: i + 1, series: 1, backing: backingOf(i), yieldBps: 0, master: -1, founder: false }).svg);
   }
-  grid(svgs, 6, 300, `coins-${start}`);
+  grid(svgs, 6, 256, `coins-${start}`);
 } else if (what === "masters") {
   const svgs = MASTERS.map((_, i) =>
     renderCoin({ seed: seedAt(1000 + i), number: 100 + i, series: 1, backing: backingOf(i), yieldBps: 0, master: i, founder: false }).svg,
   );
-  grid(svgs, 10, 300, "masters");
+  grid(svgs, 10, 256, "masters");
 } else if (what === "yield") {
   const seed = arg1 ? BigInt(arg1) : seedAt(3);
   const svgs = [0, ...YIELD_STEPS].map((bps) =>
     renderCoin({ seed, number: 3871, series: 1, backing: 25, yieldBps: bps, master: -1, founder: false }).svg,
   );
-  grid(svgs, 5, 300, "yield");
+  grid(svgs, 5, 256, "yield");
 } else if (what === "one") {
   const seed = BigInt(arg1 ?? "0");
   const coin = renderCoin({ seed, number: 1, series: 1, backing: 25, yieldBps: Number(arg2 ?? 0), master: -1, founder: false });
   writeFileSync("out/one.svg", coin.svg);
-  writeFileSync("out/one.png", png(coin.svg, 1000));
+  writeFileSync("out/one.png", png(coin.svg, 1024));
   console.log(coin.traits, coin.svg.length, "bytes");
 }

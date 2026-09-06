@@ -1,15 +1,17 @@
 /**
- * ONE coin renderer. Source of truth for contracts/src/CoinRenderer.sol.
+ * ONE coin renderer, pixel art. Source of truth for contracts/src/CoinRenderer.sol.
  *
- * Every number is an integer. There is no trigonometry: every radial thing is
- * one motif drawn on the vertical axis and copied with `rotate()` in the SVG,
- * so the Solidity port is a string builder over the same integers. The SVG is
- * meant to be returned from `tokenURI` as `data:image/svg+xml;base64,...`.
+ * A coin is a 64 by 64 grid of colour indices. Every pixel is decided by
+ * integer arithmetic on its offset from the centre: no trigonometry, no floats.
+ * Symmetry comes from folding the offset into a fundamental domain (mirror,
+ * quadrant, octant, or a quarter turn) before the pattern looks at it. Angles,
+ * where a pattern needs one, are a pseudo angle in 0..255 built from the octant
+ * and the slope. The Solidity port is the same loop over the same integers.
  *
  * Two layers:
  *   - the coin, fixed at mint from the seed (plus the master index for a 1/1);
- *   - the yield ring around it, drawn from the coin's lifetime yield over its
- *     backing, in basis points. It grows; it never shrinks.
+ *   - the yield ring around it, from the coin's lifetime yield over its backing
+ *     in basis points. It grows; it never shrinks.
  */
 
 const U64 = (1n << 64n) - 1n;
@@ -33,7 +35,7 @@ export class Draws {
     const mixed = nextRandom(this.state);
     return Number((mixed >> BigInt(64 - bits)) & ((1n << BigInt(bits)) - 1n));
   }
-  /** Weighted pick: `weights` sum to any total; returns the index. */
+  /** Weighted pick over per-mille weights; returns the index. */
   pick(weights: readonly number[]): number {
     let total = 0;
     for (const w of weights) total += w;
@@ -44,42 +46,33 @@ export class Draws {
     }
     return weights.length - 1;
   }
-  /** Uniform integer in [lo, hi]. */
   range(lo: number, hi: number): number {
     return lo + (this.bits(16) % (hi - lo + 1));
   }
+}
+
+/** A 32-bit hash of a pixel and a salt, for speckle and cracks. Same in Solidity. */
+export function hash32(x: number, y: number, salt: number): number {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(salt, 2246822519)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** Integer square root. */
+export function isqrt(n: number): number {
+  if (n < 2) return n;
+  let x = Math.floor(Math.sqrt(n));
+  while (x * x > n) x--;
+  while ((x + 1) * (x + 1) <= n) x++;
+  return x;
 }
 
 // ---------------------------------------------------------------------------
 // Trait tables. Weights are per mille of the draw; they set the odds.
 // ---------------------------------------------------------------------------
 
-export type Material = {
-  name: string;
-  /** Coin body. */
-  base: string;
-  /** Raised edges and highlights. */
-  light: string;
-  /** Recessed engraving. */
-  dark: string;
-  /** Fine line work on the body. */
-  ink: string;
-};
-
-export const MATERIALS: readonly Material[] = [
-  { name: "Silver",   base: "#b9bec6", light: "#eef0f3", dark: "#5f6670", ink: "#3a3f47" },
-  { name: "Copper",   base: "#b8734a", light: "#e8b58e", dark: "#5f3620", ink: "#3b2114" },
-  { name: "Bronze",   base: "#9a7a48", light: "#d6b986", dark: "#4d3a1e", ink: "#2f2412" },
-  { name: "Gold",     base: "#d0a640", light: "#f5dc8a", dark: "#6e5316", ink: "#4a370c" },
-  { name: "Iron",     base: "#6f7276", light: "#a6a9ad", dark: "#2f3134", ink: "#1c1d1f" },
-  { name: "Ivory",    base: "#e9e0cc", light: "#fbf7ee", dark: "#9a8b6a", ink: "#5b5040" },
-  { name: "Cobalt",   base: "#3956a3", light: "#8ea4dd", dark: "#1c2b58", ink: "#101a38" },
-  { name: "Rose",     base: "#d69aa8", light: "#f3d2d9", dark: "#7a4552", ink: "#4d2a33" },
-  { name: "Jade",     base: "#5f9d7c", light: "#a8d6bd", dark: "#2d5240", ink: "#1a3328" },
-  { name: "Obsidian", base: "#1e1c22", light: "#4e4a56", dark: "#0a090c", ink: "#8a8494" },
-  { name: "Amber",    base: "#d98a2b", light: "#f7c67a", dark: "#6e4210", ink: "#4a2c0a" },
-  { name: "Verdigris",base: "#4f8f8b", light: "#9dcfca", dark: "#25504d", ink: "#153331" },
-];
+import { MATERIALS, type Material } from "./tables.ts";
+export { MATERIALS, type Material };
 export const MATERIAL_WEIGHTS = [220, 160, 130, 70, 110, 90, 60, 45, 45, 28, 22, 20];
 
 export const GROUNDS = ["Night", "Paper", "Tinted"] as const;
@@ -88,17 +81,17 @@ export const GROUND_WEIGHTS = [640, 240, 120];
 export const RIMS = ["Smooth", "Ridged", "Beaded", "Segmented", "Toothed", "Broken"] as const;
 export const RIM_WEIGHTS = [300, 300, 170, 140, 82, 8];
 
-export const FIELDS = ["Rosette", "Radial", "Orbital", "Crystalline", "Wave", "Bare"] as const;
-export const FIELD_WEIGHTS = [300, 240, 190, 130, 90, 50];
+export const FIELDS = ["Rings", "Diamonds", "Lattice", "Grid", "Spokes", "Spiral", "Speckle", "Bare"] as const;
+export const FIELD_WEIGHTS = [220, 160, 140, 120, 130, 90, 90, 50];
 
-export const SYMMETRIES = [3, 4, 5, 6, 8, 12] as const;
-export const SYMMETRY_WEIGHTS = [70, 170, 120, 330, 240, 70];
+export const SYMMETRIES = ["Mirror", "Quad", "Octant", "Turn"] as const;
+export const SYMMETRY_WEIGHTS = [250, 350, 280, 120];
 
 export const CORES = ["Full", "Ring", "Hollow", "Aperture", "Split"] as const;
 export const CORE_WEIGHTS = [420, 240, 140, 130, 70];
 
-export const GLYPHS = ["Sigil", "Star", "Orbit", "Rune", "Seal", "None"] as const;
-export const GLYPH_WEIGHTS = [300, 220, 160, 150, 110, 60];
+export const GLYPHS = ["Sigil", "Rune", "Star", "Cross", "Dot", "None"] as const;
+export const GLYPH_WEIGHTS = [300, 200, 180, 120, 140, 60];
 
 export const SURFACES = ["Polished", "Matte", "Aged", "Fractured"] as const;
 export const SURFACE_WEIGHTS = [450, 340, 190, 20];
@@ -108,11 +101,11 @@ export const HALO_WEIGHTS = [500, 220, 120, 100, 60];
 
 export const ACCENTS = [
   { name: "None",    color: "" },
-  { name: "Crimson", color: "#c8323c" },
-  { name: "Azure",   color: "#2f7fd6" },
-  { name: "Saffron", color: "#f0b429" },
+  { name: "Crimson", color: "#d23b45" },
+  { name: "Azure",   color: "#3a8ae6" },
+  { name: "Saffron", color: "#f5b82e" },
   { name: "Mint",    color: "#4fd1a0" },
-  { name: "Violet",  color: "#8a5cd6" },
+  { name: "Violet",  color: "#9a6ee6" },
   { name: "White",   color: "#ffffff" },
 ] as const;
 export const ACCENT_WEIGHTS = [640, 90, 80, 80, 45, 40, 25];
@@ -144,7 +137,7 @@ export type Traits = {
   anomaly: Anomaly;
 };
 
-/** Everything the seed decides, resolved to indices. Same order in Solidity. */
+/** Everything the seed decides, as indices. Same draw order in Solidity. */
 export type Design = {
   material: number;
   ground: number;
@@ -157,12 +150,15 @@ export type Design = {
   halo: number;
   accent: number;
   anomaly: number;
-  /** Field density and the glyph's strokes come from these extra draws. */
+  /** Pattern scale, 0..3. */
   density: number;
+  /** Sixteen bits for the glyph. */
   glyphBits: number;
+  /** Two small settings a pattern may use. */
   fieldA: number;
   fieldB: number;
-  rimPhase: number;
+  /** Salt for speckle, cracks and the aged finish. */
+  salt: number;
 };
 
 export function designOf(seed: bigint): Design {
@@ -183,7 +179,7 @@ export function designOf(seed: bigint): Design {
     glyphBits: d.bits(16),
     fieldA: d.range(0, 15),
     fieldB: d.range(0, 15),
-    rimPhase: d.range(0, 59),
+    salt: d.bits(16),
   };
 }
 
@@ -204,10 +200,10 @@ export function traitsOf(design: Design): Traits {
 }
 
 // ---------------------------------------------------------------------------
-// Yield ring. Lifetime yield over backing, in basis points, to a level.
+// Yield ring levels.
 // ---------------------------------------------------------------------------
 
-/** Level thresholds in basis points: level n is reached at YIELD_STEPS[n - 1]. */
+/** Level n is reached at YIELD_STEPS[n - 1] basis points of lifetime yield. */
 export const YIELD_STEPS = [1, 100, 250, 500, 1000, 2000, 3500, 5000, 7500, 10000, 15000, 20000, 30000, 50000];
 
 export function yieldLevel(bps: number): number {
@@ -217,11 +213,137 @@ export function yieldLevel(bps: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Geometry. Centre 500,500; the coin is a circle of radius 400.
+// The grid.
 // ---------------------------------------------------------------------------
 
-const C = 500;
-const R = 400;
+export const N = 64;
+/** Coin radius in pixels. The centre sits between pixels 31 and 32. */
+export const RADIUS = 23;
+export const CORE = 8;
+
+/** Colour slots. A coin's palette maps these to hex colours. */
+export const SLOT = { ground: 0, body: 1, light: 2, dark: 3, ink: 4, accent: 5, white: 6, extra1: 7, extra2: 8, extra3: 9 } as const;
+
+export class Grid {
+  g = new Uint8Array(N * N);
+  get(x: number, y: number): number {
+    return x < 0 || y < 0 || x >= N || y >= N ? 0 : this.g[y * N + x];
+  }
+  set(x: number, y: number, v: number) {
+    if (x >= 0 && y >= 0 && x < N && y < N) this.g[y * N + x] = v;
+  }
+}
+
+/** The pixel's offset from the centre, doubled so it is an odd integer, and folds of it. */
+export type Px = {
+  x: number;
+  y: number;
+  /** 2x - 63, 2y - 63: odd, never zero. */
+  dx: number;
+  dy: number;
+  /** dx * dx + dy * dy: four times the squared distance. */
+  rr: number;
+  /** Radius in pixels: floor(sqrt(rr) / 2). */
+  r: number;
+  /** Absolute offsets. */
+  ax: number;
+  ay: number;
+  /** Folded offsets under the coin's symmetry. */
+  u: number;
+  v: number;
+  /** Pseudo angle 0..255, counter clockwise from the right, no trigonometry. */
+  a: number;
+};
+
+export function pixel(x: number, y: number, symmetry: Symmetry): Px {
+  const dx = 2 * x - 63;
+  const dy = 2 * y - 63;
+  const rr = dx * dx + dy * dy;
+  const r = isqrt(rr) >> 1;
+  const ax = dx < 0 ? -dx : dx;
+  const ay = dy < 0 ? -dy : dy;
+  let u: number, v: number;
+  switch (symmetry) {
+    case "Mirror": u = ax; v = dy; break;
+    case "Quad": u = ax; v = ay; break;
+    case "Octant": u = ax > ay ? ax : ay; v = ax > ay ? ay : ax; break;
+    case "Turn": {
+      let px = dx, py = dy;
+      while (!(px > 0 && py < 0)) { const t = px; px = py; py = -t; }
+      u = px; v = -py;
+      break;
+    }
+  }
+  const big = ax > ay ? ax : ay;
+  const small = ax > ay ? ay : ax;
+  const slope = Math.floor((small * 32) / big);
+  let oct: number;
+  if (dx > 0 && dy < 0) oct = ax >= ay ? 0 : 1;
+  else if (dx < 0 && dy < 0) oct = ay >= ax ? 2 : 3;
+  else if (dx < 0 && dy > 0) oct = ax >= ay ? 4 : 5;
+  else oct = ay >= ax ? 6 : 7;
+  const a = oct % 2 === 0 ? oct * 32 + slope : oct * 32 + (32 - slope);
+  return { x, y, dx, dy, rr, r, ax, ay, u, v, a: a & 255 };
+}
+
+// ---------------------------------------------------------------------------
+// The tiny font: 3 by 5, for the legend.
+// ---------------------------------------------------------------------------
+
+const FONT: Record<string, string[]> = {
+  "0": ["111", "101", "101", "101", "111"],
+  "1": ["010", "110", "010", "010", "111"],
+  "2": ["111", "001", "111", "100", "111"],
+  "3": ["111", "001", "111", "001", "111"],
+  "4": ["101", "101", "111", "001", "001"],
+  "5": ["111", "100", "111", "001", "111"],
+  "6": ["111", "100", "111", "101", "111"],
+  "7": ["111", "001", "001", "010", "010"],
+  "8": ["111", "101", "111", "101", "111"],
+  "9": ["111", "101", "111", "001", "111"],
+  A: ["111", "101", "111", "101", "101"],
+  B: ["110", "101", "110", "101", "110"],
+  C: ["111", "100", "100", "100", "111"],
+  D: ["110", "101", "101", "101", "110"],
+  E: ["111", "100", "111", "100", "111"],
+  F: ["111", "100", "111", "100", "100"],
+  I: ["111", "010", "010", "010", "111"],
+  N: ["110", "101", "101", "101", "101"],
+  O: ["111", "101", "101", "101", "111"],
+  V: ["101", "101", "101", "101", "010"],
+  X: ["101", "101", "010", "101", "101"],
+  " ": ["000", "000", "000", "000", "000"],
+};
+
+/** Writes `text` with its left edge at x, top at y. */
+export function stamp(grid: Grid, text: string, x: number, y: number, slot: number) {
+  let cx = x;
+  for (const ch of text) {
+    const rows = FONT[ch] ?? FONT[" "];
+    for (let j = 0; j < 5; j++) for (let i = 0; i < 3; i++) if (rows[j][i] === "1") grid.set(cx + i, y + j, slot);
+    cx += 4;
+  }
+}
+
+export function textWidth(text: string): number {
+  return text.length * 4 - 1;
+}
+
+/** Hex of the top 32 bits of the seed, upper case, eight characters. */
+export function fingerprint(seed: bigint): string {
+  return ((seed >> 32n) & 0xffffffffn).toString(16).toUpperCase().padStart(8, "0");
+}
+
+export function roman(n: number): string {
+  const table: [number, string][] = [[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
+  let s = "";
+  for (const [v, r] of table) while (n >= v) { s += r; n -= v; }
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// Rendering.
+// ---------------------------------------------------------------------------
 
 export type CoinInput = {
   seed: bigint;
@@ -241,45 +363,18 @@ export type Coin = {
   svg: string;
   traits: Traits;
   design: Design;
-  /** Colors for the site: the coin's body and its ink. */
+  grid: Grid;
+  colors: string[];
+  /** Colors for the site: the ground and the ink that reads on it. */
   palette: { bg: string; fg: string };
   masterName: string;
   yieldLevel: number;
 };
 
-/** Hex of the top 32 bits of the seed, upper case, eight characters. */
-export function fingerprint(seed: bigint): string {
-  return ((seed >> 32n) & 0xffffffffn).toString(16).toUpperCase().padStart(8, "0");
-}
+export const inCoin = (p: Px) => p.r <= RADIUS;
 
-function pad5(n: number): string {
-  return String(n).padStart(5, "0");
-}
-
-/** Angle of copy i of n, integer degrees; Solidity does the same division. */
-export function angle(i: number, n: number): number {
-  return Math.floor((i * 360) / n);
-}
-
-/** The largest count at most n * k that divides 360 and is a multiple of n. */
-export function copies(n: number, k: number): number {
-  let m = n * k;
-  while (m > n && 360 % m !== 0) m -= n;
-  return m;
-}
-
-/** N copies of `#m` around the centre. */
-function ring(id: string, n: number, phase = 0): string {
-  let s = "";
-  for (let i = 0; i < n; i++) {
-    const a = phase + angle(i, n);
-    s += a === 0 ? `<use href="#${id}"/>` : `<use href="#${id}" transform="rotate(${a} 500 500)"/>`;
-  }
-  return s;
-}
-
-function groundColor(design: Design, m: Material): string {
-  switch (GROUNDS[design.ground]) {
+function groundColor(ground: Ground, m: Material): string {
+  switch (ground) {
     case "Night": return "#0d0d10";
     case "Paper": return "#ece8df";
     case "Tinted": return m.dark;
@@ -292,393 +387,299 @@ export function renderCoin(input: CoinInput): Coin {
   const traits = traitsOf(design);
   const m = MATERIALS[design.material];
   const inverted = traits.anomaly === "Inverted";
-  const body = inverted ? m.dark : m.base;
-  const ink = inverted ? m.light : m.ink;
-  const light = inverted ? m.base : m.light;
-  const dark = inverted ? m.ink : m.dark;
-  const accent = ACCENTS[design.accent].color || light;
-  const ground = groundColor(design, m);
-  const n = traits.symmetry;
+  const colors = [
+    groundColor(traits.ground, m),
+    inverted ? m.dark : m.base,
+    inverted ? m.base : m.light,
+    inverted ? m.ink : m.dark,
+    inverted ? m.light : m.ink,
+    ACCENTS[design.accent].color || (inverted ? m.base : m.light),
+    "#ffffff",
+  ];
+  const grid = new Grid();
   const level = yieldLevel(input.yieldBps);
-
-  let defs = "";
-  let out = "";
-
-  // Ground.
-  out += `<rect width="1000" height="1000" fill="${ground}"/>`;
-
-  // Yield ring, behind the coin: glow first, then orbits.
-  out += yieldRing(level, light, accent, traits.anomaly === "Double Orbit");
-
-  // Static halo.
-  switch (traits.halo) {
-    case "Ring":
-      out += `<circle cx="500" cy="500" r="424" fill="none" stroke="${light}" stroke-width="2"/>`;
-      break;
-    case "Double":
-      out += `<circle cx="500" cy="500" r="420" fill="none" stroke="${light}" stroke-width="2"/><circle cx="500" cy="500" r="432" fill="none" stroke="${light}" stroke-width="1"/>`;
-      break;
-    case "Rays":
-      defs += `<path id="hr" d="M500 60V88" stroke="${light}" stroke-width="3"/>`;
-      out += ring("hr", copies(n, 4));
-      break;
-    case "Dotted":
-      defs += `<circle id="hd" cx="500" cy="74" r="4" fill="${light}"/>`;
-      out += ring("hd", copies(n, 6));
-      break;
-  }
-
-  // Eclipse: a dark disc bites the coin from one side.
+  const coreShift = traits.anomaly === "Offset Core" ? 4 : 0;
   const eclipse = traits.anomaly === "Eclipse";
 
-  // Coin body.
-  out += `<circle cx="500" cy="500" r="${R}" fill="${body}"/>`;
-  if (traits.anomaly === "Ghost Rim") {
-    out += `<circle cx="500" cy="500" r="${R}" fill="none" stroke="${ground}" stroke-width="8" stroke-dasharray="40 24"/>`;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const p = pixel(x, y, traits.symmetry);
+      let c: number;
+      if (!inCoin(p)) {
+        c = outside(p, design, traits, level);
+      } else if (eclipse && (p.dx - 34) ** 2 + (p.dy + 34) ** 2 <= (2 * RADIUS + 1) ** 2) {
+        c = SLOT.ground;
+      } else if (p.r >= RADIUS - 3) {
+        c = rimPixel(p, design, traits);
+      } else {
+        c = bodyPixel(p, design, traits);
+        const cx = p.dx - 2 * coreShift;
+        const cr = isqrt(cx * cx + p.dy * p.dy) >> 1;
+        c = corePixel(cr, cx, p, traits, c, design);
+      }
+      grid.set(x, y, c);
+    }
   }
 
-  // Field pattern, clipped to the coin.
-  defs += `<clipPath id="cf"><circle cx="500" cy="500" r="364"/></clipPath>`;
-  out += `<g clip-path="url(#cf)" fill="none" stroke="${ink}">`;
-  out += fieldPattern(design, n, ink, dark);
-  out += `</g>`;
+  glyph(grid, design, traits, coreShift);
+  crack(grid, design, traits);
+  fingerprintTicks(grid, input.seed);
+  legend(grid, input, traits.ground === "Paper" ? SLOT.dark : SLOT.light);
 
-  // Rim.
-  out += rimPattern(design, n, light, dark, ground);
-
-  // Core.
-  const coreShift = traits.anomaly === "Offset Core" ? 58 : 0;
-  out += coreShape(design, body, dark, light, ground, coreShift);
-
-  // Glyph, on the core.
-  out += glyphShape(design, n, ink, accent, coreShift);
-
-  // Fingerprint ticks: the low 32 bits of the seed as 32 marks on the rim.
-  defs += `<rect id="fp" x="498" y="118" width="4" height="12" fill="${dark}"/>`;
-  out += fingerprintTicks(input.seed, "fp");
-
-  // Backing mark: a small engraved number at the top of the rim.
-  out += `<text x="500" y="146" text-anchor="middle" font-family="Georgia,serif" font-size="14" fill="${dark}" letter-spacing="2">${input.backing}</text>`;
-
-  // Legends on the rim.
-  defs += `<path id="lb" d="M132 500A368 368 0 0 0 868 500"/><path id="lt" d="M132 500A368 368 0 0 1 868 500"/>`;
-  const legend = legendText(input);
-  out += `<text font-family="Georgia,serif" font-size="22" fill="${dark}" letter-spacing="6"><textPath href="#lb" startOffset="50%" text-anchor="middle">${legend}</textPath></text>`;
-  out += `<text font-family="Georgia,serif" font-size="22" fill="${dark}" letter-spacing="6"><textPath href="#lt" startOffset="50%" text-anchor="middle">ONE</textPath></text>`;
-
-  // Surface finish.
-  out += surfaceFinish(design, light, dark);
-
-  if (eclipse) {
-    out += `<circle cx="640" cy="360" r="${R}" fill="${ground}" fill-opacity=".92"/>`;
-  }
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><defs>${defs}</defs>${out}</svg>`;
+  const svg = svgOf(grid, colors);
+  const night = traits.ground === "Night";
   return {
     svg,
     traits,
     design,
-    palette: { bg: ground === "#0d0d10" ? body : ground, fg: ground === "#0d0d10" ? dark : ink },
+    grid,
+    colors,
+    palette: { bg: colors[0], fg: night ? colors[2] : colors[4] },
     masterName: "",
     yieldLevel: level,
   };
 }
 
-function legendText(input: CoinInput): string {
-  const roman = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-  const series = input.series <= 10 ? roman[input.series - 1] : String(input.series);
-  return `BASE ${series} ${pad5(input.number)} ${fingerprint(input.seed)}`;
+/** Pixels outside the coin: the static halo and the yield ring. */
+export function outside(p: Px, d: Design, t: Traits, level: number): number {
+  let c: number = SLOT.ground;
+  switch (t.halo) {
+    case "Ring": if (p.r === RADIUS + 2) c = SLOT.light; break;
+    case "Double": if (p.r === RADIUS + 2 || p.r === RADIUS + 5) c = SLOT.light; break;
+    case "Rays": if (p.r >= RADIUS + 2 && p.r <= RADIUS + 4 && (p.a & 15) === 0) c = SLOT.light; break;
+    case "Dotted": if (p.r === RADIUS + 3 && (p.a & 7) === 0) c = SLOT.light; break;
+  }
+  if (level === 0) return c;
+  // Levels 1..4: one orbit each at radius + 2, + 4, + 6, + 8, dashed at first.
+  // Levels 5..8: the orbits fill in, one per level. Levels 9..12: sparks between
+  // them, denser each level. Levels 13 and 14: the orbits turn to the accent.
+  const k = p.r - (RADIUS + 2);
+  if (p.r > RADIUS + 8) return c;
+  const orbit = k >= 0 && k % 2 === 0 ? k >> 1 : -1;
+  if (orbit >= 0 && orbit < (level < 4 ? level : 4)) {
+    const solid = level >= 5 + orbit;
+    const accent = level >= 13 + orbit || (t.anomaly === "Double Orbit" && (p.a & 7) === 0);
+    if (solid || (p.a & 3) < 2) c = accent ? SLOT.accent : SLOT.light;
+  } else if (level >= 9 && k >= 0) {
+    const spark = hash32(p.x, p.y, d.salt + 1) % 32;
+    if (spark < level - 8) c = spark === 0 ? SLOT.accent : SLOT.light;
+  }
+  return c;
 }
 
-function fingerprintTicks(seed: bigint, id: string): string {
-  const bits = seed & 0xffffffffn;
-  let s = "";
-  for (let i = 0; i < 32; i++) {
-    if ((bits >> BigInt(i)) & 1n) {
-      const a = i * 11 + 4; // 32 ticks over 352 degrees, offset off the axis so they never sit on the legends
-      s += `<use href="#${id}" transform="rotate(${a} 500 500)"/>`;
+function rimPixel(p: Px, d: Design, t: Traits): number {
+  const outer = p.r === RADIUS;
+  const lamp = p.dx + p.dy;
+  let c: number = lamp < -24 ? SLOT.light : lamp > 28 ? SLOT.dark : SLOT.body;
+  if (outer) c = lamp < 0 ? SLOT.light : SLOT.dark;
+  if (p.r === RADIUS - 3) c = SLOT.dark;
+  const inner = !outer && p.r > RADIUS - 3;
+  switch (t.rim) {
+    case "Smooth": break;
+    case "Ridged": if (inner && (p.a & 1) === 1) c = SLOT.dark; break;
+    case "Beaded": if (inner) c = (p.a & 3) === 0 ? SLOT.light : SLOT.dark; break;
+    case "Segmented": if (inner && ((p.a >> 3) & 1) === 1) c = SLOT.dark; break;
+    case "Toothed": if (outer && (p.a & 3) !== 0) c = SLOT.ground; else if (p.r === RADIUS - 1 && (p.a & 3) === 0) c = SLOT.light; break;
+    case "Broken": {
+      const gap = (d.fieldA * 16) & 255;
+      const da = (p.a - gap) & 255;
+      if (da < 10 || da > 246) c = SLOT.ground;
+      else if (inner && ((p.a >> 3) & 1) === 1) c = SLOT.dark;
+      break;
     }
   }
-  return s;
+  if (t.anomaly === "Ghost Rim" && ((p.x + p.y) & 1) === 1) c = SLOT.ground;
+  return c;
 }
 
-function yieldRing(level: number, light: string, accent: string, doubled: boolean): string {
-  if (level === 0) return "";
-  let s = "";
-  // Glow grows with level.
-  const glow = Math.min(level, 10);
-  s += `<circle cx="500" cy="500" r="${420 + glow * 6}" fill="${accent}" fill-opacity=".${glow < 10 ? "0" + glow : "10"}"/>`;
-  // Orbits: one thin ring per level, further out each time.
-  for (let i = 0; i < level; i++) {
-    const r = 414 + i * 6;
-    const dash = i % 3 === 0 ? "" : i % 3 === 1 ? ` stroke-dasharray="12 6"` : ` stroke-dasharray="2 8"`;
-    s += `<circle cx="500" cy="500" r="${r}" fill="none" stroke="${i % 4 === 3 ? accent : light}" stroke-width="1"${dash}/>`;
-    if (doubled) s += `<circle cx="500" cy="500" r="${r + 3}" fill="none" stroke="${light}" stroke-width="1" stroke-opacity=".5"/>`;
+function bodyPixel(p: Px, d: Design, t: Traits): number {
+  const s = 2 + d.density;
+  let c: number = SLOT.body;
+  const lamp = p.dx + p.dy;
+  if (t.surface === "Polished") {
+    if (lamp < -48 || (lamp < -36 && ((p.x + p.y) & 1) === 0)) c = SLOT.light;
+    if (lamp > 48 || (lamp > 36 && ((p.x + p.y) & 1) === 0)) c = SLOT.dark;
   }
-  // From level 6 on, tick marks around the outside.
-  if (level >= 6) {
-    const ticks = 12 * (level - 5);
-    for (let i = 0; i < ticks; i++) {
-      const a = angle(i, ticks);
-      s += `<path d="M500 ${498 - 414 - level * 6 - 8}V${498 - 414 - level * 6}" stroke="${light}" stroke-width="2" transform="rotate(${a} 500 500)"/>`;
-    }
+  let mark = false;
+  switch (t.field) {
+    case "Rings": mark = (p.r % (s + 1)) === 0; break;
+    case "Diamonds": mark = (((p.u + p.v) >> 1) % (s + 2)) === 0; break;
+    case "Lattice": mark = (((p.u >> s) + (p.v >> s)) & 1) === 1; break;
+    case "Grid": mark = ((p.u >> 1) % (s + 2)) === 0 || ((p.v >> 1) % (s + 2)) === 0; break;
+    case "Spokes": mark = (p.a % (2 << (s - 1))) === 0 && p.r > CORE + 1; break;
+    case "Spiral": mark = (((p.r * 3 + (p.a >> (s + 1))) >> 1) & 1) === 1; break;
+    case "Speckle": mark = hash32(p.u, p.v, d.salt) % 16 < (s - 1) * 2; break;
+    case "Bare": mark = p.r === 13 + (d.fieldA & 3); break;
   }
-  return s;
+  if (mark) c = SLOT.dark;
+  if (t.surface === "Aged") {
+    const h = hash32(p.x, p.y, d.salt + 7) % 12;
+    if (h === 0) c = SLOT.dark; else if (h === 1) c = SLOT.ink;
+  }
+  return c;
 }
 
-function fieldPattern(d: Design, n: number, ink: string, dark: string): string {
-  const field = FIELDS[d.field];
-  const dens = d.density; // 0..3
-  let s = "";
-  switch (field) {
-    case "Rosette": {
-      // Guilloché: rotated ellipses.
-      const rx = 200 + d.fieldA * 8;
-      const ry = 60 + d.fieldB * 6;
-      const count = copies(n, dens + 1);
-      s += `<g stroke-width="1.5">`;
-      for (let i = 0; i < count; i++) {
-        s += `<ellipse cx="500" cy="500" rx="${rx}" ry="${ry}" transform="rotate(${angle(i, count)} 500 500)"/>`;
-      }
-      s += `</g>`;
-      if (dens >= 2) {
-        s += `<circle cx="500" cy="500" r="${rx + 40}" stroke-width="1" stroke-dasharray="3 5"/>`;
-      }
-      break;
+function corePixel(cr: number, cx: number, p: Px, t: Traits, c: number, d: Design): number {
+  if (cr > CORE) return c;
+  switch (t.core) {
+    case "Full": return cr === CORE ? SLOT.dark : SLOT.body;
+    case "Ring": return cr === CORE ? SLOT.dark : cr >= CORE - 2 ? SLOT.light : SLOT.body;
+    case "Hollow": return cr === CORE ? SLOT.dark : SLOT.ground;
+    case "Aperture": return cr === CORE ? SLOT.dark : cr <= 2 ? SLOT.ground : cr === 3 ? SLOT.light : SLOT.body;
+    case "Split": {
+      const gap = (d.fieldA & 1) === 0 ? cx : p.dy;
+      if (gap > -3 && gap < 3) return SLOT.ground;
+      return cr === CORE ? SLOT.dark : SLOT.body;
     }
-    case "Radial": {
-      const lines = copies(n, 4 + dens * 2);
-      const inner = 150 + d.fieldA * 4;
-      s += `<g stroke-width="${dens >= 2 ? 1 : 2}">`;
-      for (let i = 0; i < lines; i++) {
-        const a = angle(i, lines);
-        const len = i % 2 === 0 ? 360 : 300 + d.fieldB * 3;
-        s += `<path d="M500 ${500 - inner}V${500 - len}" transform="rotate(${a} 500 500)"/>`;
-      }
-      s += `</g>`;
-      break;
-    }
-    case "Orbital": {
-      const count = 4 + dens * 2;
-      for (let i = 0; i < count; i++) {
-        const r = 140 + i * ((360 - 140) / count);
-        const dash = (i + d.fieldA) % 3 === 0 ? "" : ` stroke-dasharray="${8 + d.fieldB} ${6 + i * 2}"`;
-        s += `<circle cx="500" cy="500" r="${Math.floor(r)}" stroke-width="${i % 2 === 0 ? 2 : 1}"${dash}/>`;
-      }
-      break;
-    }
-    case "Crystalline": {
-      // A chord across the coin, copied around: a star lattice.
-      const y = 170 + d.fieldA * 10;
-      const count = copies(n, dens + 2);
-      s += `<g stroke-width="1.5">`;
-      for (let i = 0; i < count; i++) {
-        s += `<path d="M140 ${y}H860" transform="rotate(${angle(i, count)} 500 500)"/>`;
-      }
-      s += `</g>`;
-      break;
-    }
-    case "Wave": {
-      // Quadratic waves stacked, copied by symmetry.
-      const amp = 20 + d.fieldB * 3;
-      const rows = 3 + dens;
-      s += `<g stroke-width="1.5">`;
-      for (let k = 0; k < n; k++) {
-        let g = "";
-        for (let i = 0; i < rows; i++) {
-          const y = 200 + i * 40;
-          g += `<path d="M140 ${y}Q260 ${y - amp} 380 ${y}T620 ${y}T860 ${y}"/>`;
-        }
-        s += `<g transform="rotate(${angle(k, n)} 500 500)">${g}</g>`;
-      }
-      s += `</g>`;
-      break;
-    }
-    case "Bare":
-      s += `<circle cx="500" cy="500" r="${300 + d.fieldA * 3}" stroke="${dark}" stroke-width="1"/>`;
-      break;
   }
-  return s;
 }
 
-function rimPattern(d: Design, n: number, light: string, dark: string, ground: string): string {
-  const rim = RIMS[d.rim];
-  let s = `<circle cx="500" cy="500" r="${R - 4}" fill="none" stroke="${light}" stroke-width="4"/>`;
-  s += `<circle cx="500" cy="500" r="${R - 32}" fill="none" stroke="${dark}" stroke-width="2"/>`;
-  switch (rim) {
-    case "Smooth":
-      break;
-    case "Ridged":
-      s += `<circle cx="500" cy="500" r="${R - 18}" fill="none" stroke="${dark}" stroke-width="16" stroke-dasharray="3 5"/>`;
-      break;
-    case "Beaded": {
-      const beads = copies(n, 8);
-      for (let i = 0; i < beads; i++) {
-        s += `<circle cx="500" cy="118" r="6" fill="${light}" transform="rotate(${angle(i, beads)} 500 500)"/>`;
-      }
-      break;
-    }
-    case "Segmented":
-      s += `<circle cx="500" cy="500" r="${R - 18}" fill="none" stroke="${dark}" stroke-width="14" stroke-dasharray="70 18"/>`;
-      break;
-    case "Toothed": {
-      const teeth = copies(n, 6);
-      for (let i = 0; i < teeth; i++) {
-        s += `<path d="M490 104L500 130L510 104Z" fill="${dark}" transform="rotate(${angle(i, teeth)} 500 500)"/>`;
-      }
-      break;
-    }
-    case "Broken":
-      s += `<circle cx="500" cy="500" r="${R - 18}" fill="none" stroke="${dark}" stroke-width="14" stroke-dasharray="70 18"/>`;
-      s += `<rect x="470" y="90" width="60" height="60" fill="${ground}" transform="rotate(${d.rimPhase * 6 + 40} 500 500)"/>`;
-      break;
-  }
-  return s;
-}
-
-function coreShape(d: Design, body: string, dark: string, light: string, ground: string, shift: number): string {
-  const core = CORES[d.core];
-  const cx = 500 + shift;
-  let s = "";
-  switch (core) {
-    case "Full":
-      s += `<circle cx="${cx}" cy="500" r="130" fill="${body}" stroke="${dark}" stroke-width="2"/>`;
-      break;
-    case "Ring":
-      s += `<circle cx="${cx}" cy="500" r="130" fill="${body}" stroke="${light}" stroke-width="10"/><circle cx="${cx}" cy="500" r="112" fill="none" stroke="${dark}" stroke-width="2"/>`;
-      break;
-    case "Hollow":
-      s += `<circle cx="${cx}" cy="500" r="130" fill="${ground}" stroke="${dark}" stroke-width="6"/>`;
-      break;
-    case "Aperture":
-      s += `<circle cx="${cx}" cy="500" r="130" fill="${body}" stroke="${dark}" stroke-width="2"/><circle cx="${cx}" cy="500" r="34" fill="${ground}" stroke="${light}" stroke-width="4"/>`;
-      break;
-    case "Split":
-      s += `<circle cx="${cx}" cy="500" r="130" fill="${body}" stroke="${dark}" stroke-width="2"/><rect x="${cx - 6}" y="360" width="12" height="280" fill="${ground}" transform="rotate(${d.fieldA * 22} ${cx} 500)"/>`;
-      break;
-  }
-  return s;
-}
-
-/**
- * The glyph is up to four strokes on the upper half of the vertical axis,
- * mirrored and copied by the symmetry. Sixteen bits pick the strokes.
- */
-function glyphShape(d: Design, n: number, ink: string, accent: string, shift: number): string {
-  const glyph = GLYPHS[d.glyph];
-  if (glyph === "None") return "";
-  const cx = 500 + shift;
+/** The glyph, up to 8 by 8, on the core. Sixteen bits decide it. */
+function glyph(grid: Grid, d: Design, t: Traits, shift: number) {
+  if (t.glyph === "None") return;
   const bits = d.glyphBits;
-  const color = ACCENTS[d.accent].color ? accent : ink;
-  const hollow = CORES[d.core] === "Hollow";
-  const stroke = hollow ? accent : color;
-  let motif = "";
-  switch (glyph) {
-    case "Sigil": {
-      // Strokes from the axis outwards, bent by the bits.
-      for (let i = 0; i < 4; i++) {
-        const b = (bits >> (i * 4)) & 15;
-        const y1 = 500 - 20 - i * 22;
-        const dx = (b & 7) * 6 - 18;
-        const y2 = y1 - 18 - (b >> 3) * 14;
-        motif += `<path d="M${cx} ${y1}L${cx + dx} ${y2}"/>`;
+  const slot = ACCENTS[d.accent].color ? SLOT.accent : t.core === "Hollow" ? SLOT.light : SLOT.ink;
+  const cx = 31 + shift, cy = 31;
+  const on = (i: number, j: number) => ((bits >> (i * 4 + j)) & 1) === 1;
+  switch (t.glyph) {
+    case "Sigil":
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        if (!on(i, j)) continue;
+        grid.set(cx - i, cy - j, slot); grid.set(cx + 1 + i, cy - j, slot);
+        grid.set(cx - i, cy + 1 + j, slot); grid.set(cx + 1 + i, cy + 1 + j, slot);
       }
       break;
-    }
+    case "Rune":
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        if (!on(i, j)) continue;
+        grid.set(cx + 1 + i, cy - j, slot);
+        grid.set(cx + 1 + j, cy + 1 + i, slot);
+        grid.set(cx - i, cy + 1 + j, slot);
+        grid.set(cx - j, cy - i, slot);
+      }
+      break;
     case "Star": {
-      const len = 60 + (bits & 31);
-      const w = 8 + ((bits >> 5) & 7);
-      motif += `<path d="M${cx} ${500 - len}L${cx + w} 500L${cx - w} 500Z"/>`;
+      const arm = 2 + (bits & 3);
+      for (let k = -arm; k <= arm + 1; k++) { grid.set(cx + k, cy, slot); grid.set(cx + k, cy + 1, slot); grid.set(cx, cy + k, slot); grid.set(cx + 1, cy + k, slot); }
+      if (bits & 4) for (let k = 1; k < arm; k++) { grid.set(cx - k, cy - k, slot); grid.set(cx + 1 + k, cy - k, slot); grid.set(cx - k, cy + 1 + k, slot); grid.set(cx + 1 + k, cy + 1 + k, slot); }
       break;
     }
-    case "Orbit": {
-      const r = 8 + (bits & 7);
-      const y = 500 - 40 - ((bits >> 3) & 31);
-      motif += `<circle cx="${cx}" cy="${y}" r="${r}"/>`;
-      if (bits & 256) motif += `<circle cx="${cx}" cy="${y - r * 3}" r="${r >> 1}"/>`;
+    case "Cross": {
+      const arm = 3 + (bits & 3);
+      const w = (bits >> 2) & 1;
+      for (let k = -arm; k <= arm + 1; k++) for (let q = -w; q <= 1 + w; q++) { grid.set(cx + k, cy + q, slot); grid.set(cx + q, cy + k, slot); }
       break;
     }
-    case "Rune": {
-      const y1 = 500 - 16;
-      const y2 = 500 - 70 - (bits & 31);
-      const dx = ((bits >> 5) & 7) * 5;
-      motif += `<path d="M${cx} ${y1}V${y2}M${cx} ${y2 + 20}L${cx + dx + 8} ${y2 + 4}"/>`;
-      break;
-    }
-    case "Seal": {
-      const y = 500 - 50 - (bits & 15);
-      motif += `<path d="M${cx} ${y - 30}L${cx + 26} ${y}L${cx} ${y + 30}L${cx - 26} ${y}Z"/>`;
-      break;
-    }
-  }
-  const fill = glyph === "Star" || glyph === "Seal" ? stroke : "none";
-  const defs = `<g id="gl" fill="${fill}" stroke="${stroke}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">${motif}</g>`;
-  const mirror = glyph === "Sigil" || glyph === "Rune";
-  let s = `<defs>${defs}</defs>`;
-  for (let i = 0; i < n; i++) {
-    const a = angle(i, n);
-    s += `<use href="#gl" transform="rotate(${a} ${cx} 500)"/>`;
-    if (mirror) s += `<use href="#gl" transform="rotate(${a} ${cx} 500) matrix(-1 0 0 1 ${cx * 2} 0)"/>`;
-  }
-  if (glyph !== "Orbit") s += `<circle cx="${cx}" cy="500" r="${6 + (bits >> 12)}" fill="${stroke}"/>`;
-  return s;
-}
-
-function surfaceFinish(d: Design, light: string, dark: string): string {
-  switch (SURFACES[d.surface]) {
-    case "Polished":
-      return `<ellipse cx="380" cy="330" rx="200" ry="110" fill="${light}" fill-opacity=".16" transform="rotate(-35 380 330)"/><ellipse cx="640" cy="690" rx="180" ry="90" fill="${dark}" fill-opacity=".14" transform="rotate(-35 640 690)"/>`;
-    case "Matte":
-      return "";
-    case "Aged": {
-      let s = `<circle cx="500" cy="500" r="${R}" fill="${dark}" fill-opacity=".14"/>`;
-      const p = new Draws(BigInt(d.glyphBits) * 977n + BigInt(d.fieldA));
-      for (let i = 0; i < 9; i++) {
-        const r = 18 + p.bits(5);
-        const x = 220 + p.bits(9);
-        const y = 220 + p.bits(9);
-        s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${dark}" fill-opacity=".${10 + p.bits(4)}"/>`;
+    case "Dot": {
+      const rad = 1 + (bits & 1);
+      for (let j = -rad; j <= rad + 1; j++) for (let i = -rad; i <= rad + 1; i++) {
+        if (rad === 2 && (i === -2 || i === 3) && (j === -2 || j === 3)) continue;
+        grid.set(cx + i, cy + j, slot);
       }
-      return s;
-    }
-    case "Fractured": {
-      const a = d.fieldA * 22;
-      return `<g transform="rotate(${a} 500 500)" fill="none" stroke="${dark}" stroke-width="5" stroke-linejoin="round"><path d="M500 110L470 260L520 330L440 470L510 560L470 700L500 890"/><path d="M520 330L640 300M440 470L300 440M510 560L610 640"/></g>`;
+      break;
     }
   }
 }
 
+/** A fracture: a walk from the top of the coin downwards, with a few side splits. */
+function crack(grid: Grid, d: Design, t: Traits) {
+  if (t.surface !== "Fractured") return;
+  let x = 31 + ((d.fieldA & 7) - 4), y = 9;
+  for (let step = 0; step < 60 && y < 50; step++) {
+    grid.set(x, y, SLOT.ink);
+    const h = hash32(x, y, d.salt + 3) % 8;
+    if (h < 3) x += 1; else if (h < 6) x -= 1;
+    if (h !== 7) y += 1;
+    if (h === 0 && y > 20) { grid.set(x + 1, y, SLOT.ink); grid.set(x + 2, y - 1, SLOT.ink); }
+  }
+}
+
+/** Thirty-two pixels on the inner rim ring, one per bit of the seed's low word. */
+export const TICKS: [number, number][] = (() => {
+  const ring: { x: number; y: number; a: number }[] = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const p = pixel(x, y, "Quad");
+    if (p.r === RADIUS - 3) ring.push({ x, y, a: p.a });
+  }
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 32; i++) {
+    const want = i * 8;
+    let best = ring[0], bestD = 999;
+    for (const q of ring) {
+      const d = Math.min((q.a - want) & 255, (want - q.a) & 255);
+      if (d < bestD || (d === bestD && (q.y < best.y || (q.y === best.y && q.x < best.x)))) { best = q; bestD = d; }
+    }
+    pts.push([best.x, best.y]);
+  }
+  return pts;
+})();
+
+function fingerprintTicks(grid: Grid, seed: bigint) {
+  const bits = seed & 0xffffffffn;
+  for (let i = 0; i < 32; i++) {
+    const [x, y] = TICKS[i];
+    grid.set(x, y, ((bits >> BigInt(i)) & 1n) ? SLOT.light : SLOT.ink);
+  }
+}
+
+/** Top: ONE, series, backing. Bottom: number and fingerprint. Each on a cleared band. */
+function legend(grid: Grid, input: CoinInput, slot: number) {
+  band(grid, `ONE ${roman(input.series)} ${input.backing}`, 1, slot);
+  band(grid, `${String(input.number).padStart(5, "0")} ${fingerprint(input.seed)}`, 58, slot);
+}
+
+function band(grid: Grid, text: string, y: number, slot: number) {
+  const w = textWidth(text);
+  const x = (N - w) >> 1;
+  for (let j = y - 1; j <= y + 5; j++) for (let i = x - 1; i <= x + w; i++) grid.set(i, j, SLOT.ground);
+  stamp(grid, text, x, y, slot);
+}
+
+/** SVG: one rect per run of equal colour, crisp edges. */
+export function svgOf(grid: Grid, colors: string[]): string {
+  let rects = "";
+  for (let y = 0; y < N; y++) {
+    let x = 0;
+    while (x < N) {
+      const v = grid.g[y * N + x];
+      let w = 1;
+      while (x + w < N && grid.g[y * N + x + w] === v) w++;
+      if (v !== 0) rects += `<rect x="${x}" y="${y}" width="${w}" height="1" fill="${colors[v]}"/>`;
+      x += w;
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N} ${N}" shape-rendering="crispEdges"><rect width="${N}" height="${N}" fill="${colors[0]}"/>${rects}</svg>`;
+}
+
 // ---------------------------------------------------------------------------
-// Master coins. Fifty recipes; each is a mode plus its own settings and name.
+// Master coins.
 // ---------------------------------------------------------------------------
 
-import { MASTERS, renderMasterBody } from "./masters.ts";
+import { MASTERS, masterPixel, type Master } from "./masters.ts";
 
 export { MASTERS };
 
 function renderMaster(input: CoinInput, design: Design): Coin {
-  const recipe = MASTERS[input.master];
+  const recipe: Master = MASTERS[input.master];
   const traits = traitsOf(design);
   const level = yieldLevel(input.yieldBps);
-  const body = renderMasterBody(recipe, input, design, level);
-  const legend = legendText(input);
-  let out = body.svg;
-  out += `<defs><path id="lb" d="M132 500A368 368 0 0 0 868 500"/><path id="lt" d="M132 500A368 368 0 0 1 868 500"/></defs>`;
-  out += `<text font-family="Georgia,serif" font-size="22" fill="${body.ink}" letter-spacing="6"><textPath href="#lb" startOffset="50%" text-anchor="middle">${legend}</textPath></text>`;
-  out += `<text font-family="Georgia,serif" font-size="22" fill="${body.ink}" letter-spacing="6"><textPath href="#lt" startOffset="50%" text-anchor="middle">${recipe.name.toUpperCase()}</textPath></text>`;
-  out += `<text x="500" y="146" text-anchor="middle" font-family="Georgia,serif" font-size="14" fill="${body.ink}" letter-spacing="2">${input.backing}</text>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">${out}</svg>`;
+  const colors = [recipe.bg, recipe.body, recipe.light, recipe.dark, recipe.ink, recipe.accent, "#ffffff", recipe.extra1, recipe.extra2, recipe.extra3];
+  const grid = new Grid();
+  const quiet: Traits = { ...traits, halo: "None", anomaly: "None" };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const p = pixel(x, y, recipe.symmetry);
+    grid.set(x, y, inCoin(p) ? masterPixel(recipe, p, design) : outside(p, design, quiet, level));
+  }
+  fingerprintTicks(grid, input.seed);
+  legend(grid, input, recipe.bg === "#ece8df" ? SLOT.dark : SLOT.light);
   return {
-    svg,
-    traits: { ...traits, material: recipe.material, anomaly: "None", accent: "None" },
+    svg: svgOf(grid, colors),
+    traits: { ...traits, material: recipe.material, anomaly: "None", accent: "None", halo: "None" },
     design,
-    palette: { bg: body.bg, fg: body.ink },
+    grid,
+    colors,
+    palette: { bg: recipe.bg, fg: recipe.light },
     masterName: recipe.name,
     yieldLevel: level,
   };
-}
-
-/** Yield ring helper shared with the masters. */
-export function yieldOrbits(level: number, light: string, accent: string): string {
-  return yieldRing(level, light, accent, false);
 }

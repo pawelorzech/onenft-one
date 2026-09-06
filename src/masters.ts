@@ -1,264 +1,293 @@
 /**
- * The fifty Master Coins. Each is a recipe: a mode (one composition
- * algorithm), a palette and two integer settings. A mode is shared by three
- * or four recipes; the palette and the settings make each one its own coin.
- * Everything here is integer and rotate-only, like coin.ts.
+ * The fifty Master Coins: twenty-five compositions, each in two palettes.
+ * A composition is a per-pixel rule over the same integer offsets coin.ts
+ * uses, so the Solidity port is one more switch in the same loop.
  */
-import type { CoinInput, Design } from "./coin.ts";
-import { yieldOrbits, angle } from "./coin.ts";
+import { MATERIALS } from "./tables.ts";
+import { RADIUS, CORE, SLOT, hash32, isqrt, type Px, type Design, type Symmetry } from "./coin.ts";
 
-export type MasterMode =
-  | "void" | "eclipse" | "singularity" | "mobius" | "prism" | "supernova"
-  | "blacksun" | "mirror" | "zero" | "fracture" | "genesis" | "infinite"
-  | "lattice" | "spiral";
+export type Mode =
+  | "void" | "eclipse" | "singularity" | "mobius" | "prism" | "supernova" | "blacksun"
+  | "mirror" | "zero" | "fracture" | "genesis" | "infinite" | "lattice" | "spiral"
+  | "checker" | "target" | "hourglass" | "cross" | "orbiter" | "maze" | "pulse"
+  | "ziggurat" | "comet" | "eye" | "crown";
 
 export type Master = {
   name: string;
-  mode: MasterMode;
+  mode: Mode;
   material: string;
+  symmetry: Symmetry;
   bg: string;
   body: string;
   light: string;
   dark: string;
   ink: string;
   accent: string;
+  extra1: string;
+  extra2: string;
+  extra3: string;
   a: number;
   b: number;
 };
 
-const M = (name: string, mode: MasterMode, material: string, bg: string, body: string, light: string, dark: string, ink: string, accent: string, a: number, b: number): Master =>
-  ({ name, mode, material, bg, body, light, dark, ink, accent, a, b });
+const NIGHT = "#0d0d10";
+const PAPER = "#ece8df";
+
+function mat(name: string) {
+  const m = MATERIALS.find((x) => x.name === name);
+  if (!m) throw new Error(`no material ${name}`);
+  return m;
+}
+
+/** A recipe from a material, a ground, an accent and up to three extra colours. */
+function M(name: string, mode: Mode, material: string, symmetry: Symmetry, bg: string, accent: string, a = 0, b = 0, extras: string[] = []): Master {
+  const m = mat(material);
+  return {
+    name, mode, material, symmetry, bg, accent, a, b,
+    body: m.base, light: m.light, dark: m.dark, ink: m.ink,
+    extra1: extras[0] ?? m.light, extra2: extras[1] ?? m.dark, extra3: extras[2] ?? accent,
+  };
+}
 
 export const MASTERS: readonly Master[] = [
-  M("Genesis",      "genesis",     "Gold",      "#0d0d10", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 12, 3),
-  M("The Void",     "void",        "Obsidian",  "#0d0d10", "#131216", "#3a3742", "#050507", "#8a8494", "#ffffff", 1, 0),
-  M("Eclipse",      "eclipse",     "Gold",      "#0d0d10", "#f0c860", "#fff0b0", "#6e5316", "#2a2010", "#ffffff", 70, 0),
-  M("Singularity",  "singularity", "Iron",      "#0d0d10", "#6f7276", "#c8cbcf", "#2f3134", "#1c1d1f", "#ffffff", 9, 0),
-  M("Möbius",       "mobius",      "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#2f7fd6", 6, 0),
-  M("Prism",        "prism",       "Ivory",     "#ece8df", "#f6f2e8", "#ffffff", "#9a8b6a", "#5b5040", "#c8323c", 6, 0),
-  M("Supernova",    "supernova",   "Amber",     "#0d0d10", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 40, 0),
-  M("Black Sun",    "blacksun",    "Obsidian",  "#ece8df", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#f0b429", 24, 0),
-  M("The Mirror",   "mirror",      "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#ffffff", 0, 0),
-  M("Zero",         "zero",        "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#c8323c", 0, 0),
-  M("Infinite",     "infinite",    "Cobalt",    "#0d0d10", "#3956a3", "#8ea4dd", "#1c2b58", "#101a38", "#ffffff", 3, 0),
-  M("Fracture",     "fracture",    "Jade",      "#0d0d10", "#5f9d7c", "#a8d6bd", "#2d5240", "#1a3328", "#ffffff", 5, 0),
-  M("Lattice",      "lattice",     "Copper",    "#0d0d10", "#b8734a", "#e8b58e", "#5f3620", "#3b2114", "#ffffff", 12, 0),
-  M("Spiral",       "spiral",      "Verdigris", "#0d0d10", "#4f8f8b", "#9dcfca", "#25504d", "#153331", "#ffffff", 14, 0),
-  M("Aurora",       "prism",       "Cobalt",    "#0d0d10", "#1c2b58", "#8ea4dd", "#101a38", "#c4d2f4", "#4fd1a0", 8, 1),
-  M("Umbra",        "eclipse",     "Iron",      "#0d0d10", "#a6a9ad", "#e0e2e4", "#2f3134", "#1c1d1f", "#c8323c", 120, 1),
-  M("Nadir",        "void",        "Cobalt",    "#0d0d10", "#0e1630", "#3956a3", "#070b18", "#8ea4dd", "#ffffff", 3, 1),
-  M("Zenith",       "supernova",   "Gold",      "#ece8df", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 36, 1),
-  M("Halcyon",      "mobius",      "Rose",      "#ece8df", "#d69aa8", "#f3d2d9", "#7a4552", "#4d2a33", "#2f7fd6", 6, 1),
-  M("Meridian",     "mirror",      "Copper",    "#0d0d10", "#b8734a", "#e8b58e", "#5f3620", "#3b2114", "#ffffff", 1, 0),
-  M("Corona",       "blacksun",    "Gold",      "#0d0d10", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 36, 1),
-  M("Penumbra",     "eclipse",     "Obsidian",  "#ece8df", "#3a3742", "#8a8494", "#0a090c", "#050507", "#f0b429", 160, 0),
-  M("Antimatter",   "mirror",      "Obsidian",  "#ece8df", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#ffffff", 2, 0),
-  M("Quasar",       "supernova",   "Cobalt",    "#0d0d10", "#3956a3", "#8ea4dd", "#1c2b58", "#101a38", "#ffffff", 60, 0),
-  M("Pulsar",       "singularity", "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#c8323c", 7, 1),
-  M("Tessellation", "lattice",     "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#ffffff", 8, 1),
-  M("Monolith",     "zero",        "Obsidian",  "#ece8df", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#ffffff", 1, 0),
-  M("Oracle",       "infinite",    "Ivory",     "#0d0d10", "#e9e0cc", "#fbf7ee", "#9a8b6a", "#5b5040", "#8a5cd6", 4, 1),
-  M("Relic",        "fracture",    "Bronze",    "#ece8df", "#9a7a48", "#d6b986", "#4d3a1e", "#2f2412", "#ffffff", 6, 1),
-  M("Ember",        "spiral",      "Copper",    "#0d0d10", "#b8734a", "#e8b58e", "#5f3620", "#3b2114", "#f0b429", 10, 1),
-  M("Glacier",      "prism",       "Silver",    "#ece8df", "#eef0f3", "#ffffff", "#5f6670", "#3a3f47", "#2f7fd6", 12, 0),
-  M("Tide",         "mobius",      "Verdigris", "#0d0d10", "#4f8f8b", "#9dcfca", "#25504d", "#153331", "#ffffff", 5, 0),
-  M("Vertex",       "lattice",     "Iron",      "#ece8df", "#6f7276", "#a6a9ad", "#2f3134", "#1c1d1f", "#c8323c", 6, 0),
-  M("Cipher",       "singularity", "Obsidian",  "#0d0d10", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#4fd1a0", 12, 0),
-  M("Aether",       "infinite",    "Silver",    "#ece8df", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#8a5cd6", 6, 0),
-  M("Nocturne",     "void",        "Iron",      "#0d0d10", "#1a1b1e", "#6f7276", "#0a0a0c", "#a6a9ad", "#8a5cd6", 2, 1),
-  M("Solstice",     "eclipse",     "Amber",     "#0d0d10", "#f7c67a", "#fff0d0", "#6e4210", "#4a2c0a", "#ffffff", 40, 1),
-  M("Equinox",      "mirror",      "Jade",      "#ece8df", "#5f9d7c", "#a8d6bd", "#2d5240", "#1a3328", "#ffffff", 0, 1),
-  M("Lodestar",     "supernova",   "Silver",    "#0d0d10", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#f0b429", 24, 1),
-  M("Helix",        "spiral",      "Cobalt",    "#ece8df", "#3956a3", "#8ea4dd", "#1c2b58", "#101a38", "#ffffff", 18, 0),
-  M("Abyss",        "void",        "Verdigris", "#0d0d10", "#0c1a1a", "#25504d", "#050a0a", "#9dcfca", "#4fd1a0", 4, 0),
-  M("Radiance",     "blacksun",    "Amber",     "#ece8df", "#d98a2b", "#f7c67a", "#6e4210", "#4a2c0a", "#ffffff", 40, 0),
-  M("Obelisk",      "zero",        "Iron",      "#0d0d10", "#6f7276", "#a6a9ad", "#2f3134", "#1c1d1f", "#ffffff", 2, 1),
-  M("Chalice",      "genesis",     "Rose",      "#0d0d10", "#d69aa8", "#f3d2d9", "#7a4552", "#4d2a33", "#f0b429", 8, 2),
-  M("Keystone",     "fracture",    "Iron",      "#0d0d10", "#6f7276", "#a6a9ad", "#2f3134", "#1c1d1f", "#c8323c", 3, 0),
-  M("Anvil",        "lattice",     "Bronze",    "#0d0d10", "#9a7a48", "#d6b986", "#4d3a1e", "#2f2412", "#ffffff", 4, 1),
-  M("Sigma",        "singularity", "Jade",      "#ece8df", "#5f9d7c", "#a8d6bd", "#2d5240", "#1a3328", "#ffffff", 5, 0),
-  M("Omega",        "infinite",    "Obsidian",  "#0d0d10", "#1e1c22", "#4e4a56", "#0a090c", "#8a8494", "#c8323c", 2, 1),
-  M("Alpha",        "genesis",     "Silver",    "#ece8df", "#b9bec6", "#eef0f3", "#5f6670", "#3a3f47", "#2f7fd6", 6, 1),
-  M("Ouroboros",    "spiral",      "Gold",      "#0d0d10", "#d0a640", "#f5dc8a", "#6e5316", "#4a370c", "#ffffff", 8, 2),
+  M("Genesis",      "genesis",     "Gold",      "Octant", NIGHT, "#ffffff", 4, 6),
+  M("The Void",     "void",        "Obsidian",  "Quad",   NIGHT, "#ffffff", 9, 0),
+  M("Eclipse",      "eclipse",     "Gold",      "Mirror", NIGHT, "#ffffff", 14, 0),
+  M("Singularity",  "singularity", "Iron",      "Quad",   NIGHT, "#ffffff", 140, 0),
+  M("Möbius",       "mobius",      "Silver",    "Quad",   NIGHT, "#3a8ae6", 40, 16),
+  M("Prism",        "prism",       "Ivory",     "Quad",   PAPER, "#d23b45", 5, 0, ["#3a8ae6", "#f5b82e", "#4fd1a0"]),
+  M("Supernova",    "supernova",   "Amber",     "Octant", NIGHT, "#ffffff", 8, 16),
+  M("Black Sun",    "blacksun",    "Obsidian",  "Quad",   PAPER, "#f5b82e", 15, 0),
+  M("The Mirror",   "mirror",      "Silver",    "Mirror", NIGHT, "#ffffff", 0, 0),
+  M("Zero",         "zero",        "Ivory",     "Quad",   NIGHT, "#d23b45", 10, 16),
+  M("Infinite",     "infinite",    "Cobalt",    "Quad",   NIGHT, "#ffffff", 18, 8),
+  M("Fracture",     "fracture",    "Jade",      "Quad",   NIGHT, "#ffffff", 5, 12),
+  M("Lattice",      "lattice",     "Copper",    "Quad",   NIGHT, "#ffffff", 5, 0),
+  M("Spiral",       "spiral",      "Verdigris", "Quad",   NIGHT, "#ffffff", 6, 0),
+  M("Vertex",       "checker",     "Iron",      "Quad",   PAPER, "#d23b45", 3, 0),
+  M("Lodestar",     "target",      "Silver",    "Quad",   NIGHT, "#f5b82e", 3, 0),
+  M("Meridian",     "hourglass",   "Copper",    "Quad",   NIGHT, "#ffffff", 0, 0),
+  M("Obelisk",      "cross",       "Iron",      "Quad",   NIGHT, "#ffffff", 5, 0),
+  M("Oracle",       "orbiter",     "Ivory",     "Quad",   NIGHT, "#9a6ee6", 14, 64),
+  M("Labyrinth",    "maze",        "Bronze",    "Quad",   NIGHT, "#ffffff", 2, 3),
+  M("Radiance",     "pulse",       "Amber",     "Quad",   PAPER, "#ffffff", 0, 0),
+  M("Ziggurat",     "ziggurat",    "Bronze",    "Quad",   NIGHT, "#f5b82e", 2, 0),
+  M("Comet",        "comet",       "Cobalt",    "Quad",   NIGHT, "#ffffff", 0, 0),
+  M("Oculus",       "eye",         "Jade",      "Quad",   NIGHT, "#f5b82e", 0, 0),
+  M("Crown",        "crown",       "Gold",      "Mirror", NIGHT, "#d23b45", 16, 0),
+  M("Alpha",        "genesis",     "Silver",    "Octant", PAPER, "#3a8ae6", 3, 5),
+  M("Abyss",        "void",        "Verdigris", "Quad",   NIGHT, "#4fd1a0", 5, 1),
+  M("Umbra",        "eclipse",     "Iron",      "Mirror", PAPER, "#d23b45", 10, 1),
+  M("Cipher",       "singularity", "Obsidian",  "Quad",   NIGHT, "#4fd1a0", 90, 1),
+  M("Tide",         "mobius",      "Verdigris", "Quad",   PAPER, "#ffffff", 36, 20),
+  M("Aurora",       "prism",       "Cobalt",    "Quad",   NIGHT, "#4fd1a0", 4, 1, ["#9a6ee6", "#3a8ae6", "#f3d2d9"]),
+  M("Quasar",       "supernova",   "Cobalt",    "Octant", NIGHT, "#ffffff", 4, 32),
+  M("Corona",       "blacksun",    "Gold",      "Quad",   NIGHT, "#ffffff", 13, 1),
+  M("Antimatter",   "mirror",      "Obsidian",  "Mirror", PAPER, "#ffffff", 1, 0),
+  M("Monolith",     "zero",        "Obsidian",  "Quad",   PAPER, "#ffffff", 6, 18),
+  M("Ouroboros",    "infinite",    "Gold",      "Quad",   NIGHT, "#d23b45", 16, 6),
+  M("Relic",        "fracture",    "Bronze",    "Quad",   PAPER, "#ffffff", 7, 10),
+  M("Tessellation", "lattice",     "Ivory",     "Quad",   NIGHT, "#3a8ae6", 4, 1),
+  M("Helix",        "spiral",      "Rose",      "Quad",   NIGHT, "#ffffff", 4, 1),
+  M("Keystone",     "checker",     "Jade",      "Quad",   NIGHT, "#f5b82e", 2, 1),
+  M("Pulsar",       "target",      "Cobalt",    "Quad",   PAPER, "#d23b45", 2, 1),
+  M("Equinox",      "hourglass",   "Jade",      "Quad",   PAPER, "#ffffff", 1, 0),
+  M("Anvil",        "cross",       "Bronze",    "Quad",   PAPER, "#d23b45", 4, 1),
+  M("Aether",       "orbiter",     "Silver",    "Quad",   NIGHT, "#3a8ae6", 12, 32),
+  M("Enigma",       "maze",        "Obsidian",  "Quad",   NIGHT, "#4fd1a0", 2, 2),
+  M("Ember",        "pulse",       "Copper",    "Quad",   NIGHT, "#f5b82e", 1, 0),
+  M("Zenith",       "ziggurat",    "Gold",      "Quad",   PAPER, "#ffffff", 3, 1),
+  M("Nadir",        "comet",       "Obsidian",  "Quad",   NIGHT, "#9a6ee6", 1, 0),
+  M("Omega",        "eye",         "Rose",      "Quad",   PAPER, "#2d3138", 1, 0),
+  M("Halcyon",      "crown",       "Rose",      "Mirror", NIGHT, "#f5b82e", 12, 1),
 ];
 
-export type MasterBody = { svg: string; bg: string; ink: string };
-
-const R = 400;
-
-function rot(inner: string, n: number, cx = 500): string {
-  let s = "";
-  for (let i = 0; i < n; i++) {
-    const a = angle(i, n);
-    s += a === 0 ? inner : `<g transform="rotate(${a} ${cx} 500)">${inner}</g>`;
-  }
-  return s;
+/** The default rim, shared by every master: a lit outer edge and a dark inner line. */
+function rim(p: Px): number {
+  if (p.r === RADIUS) return p.dx + p.dy < 0 ? SLOT.light : SLOT.dark;
+  if (p.r === RADIUS - 3) return SLOT.dark;
+  return p.dx + p.dy < -24 ? SLOT.light : p.dx + p.dy > 28 ? SLOT.dark : SLOT.body;
 }
 
-function base(m: Master, level: number): string {
-  return `<rect width="1000" height="1000" fill="${m.bg}"/>` + yieldOrbits(level, m.light, m.accent);
-}
-
-function rim(m: Master): string {
-  return `<circle cx="500" cy="500" r="${R - 4}" fill="none" stroke="${m.light}" stroke-width="4"/><circle cx="500" cy="500" r="${R - 32}" fill="none" stroke="${m.dark}" stroke-width="2"/>`;
-}
-
-function fingerprintTicks(seed: bigint, color: string): string {
-  const bits = seed & 0xffffffffn;
-  let s = "";
-  for (let i = 0; i < 32; i++) {
-    if ((bits >> BigInt(i)) & 1n) {
-      s += `<rect x="498" y="118" width="4" height="12" fill="${color}" transform="rotate(${i * 11 + 4} 500 500)"/>`;
-    }
-  }
-  return s;
-}
-
-export function renderMasterBody(m: Master, input: CoinInput, design: Design, level: number): MasterBody {
-  let s = base(m, level);
-  s += `<circle cx="500" cy="500" r="${R}" fill="${m.body}"/>`;
-  const inkOnBody = m.mode === "void" || m.mode === "mirror" ? m.ink : m.dark;
+/** The colour slot of a pixel inside the coin. */
+export function masterPixel(m: Master, p: Px, d: Design): number {
+  if (p.r >= RADIUS - 3 && m.mode !== "zero" && m.mode !== "blacksun") return rim(p);
+  const { r, dx, dy, ax, ay, a } = p;
+  const lamp = dx + dy;
   switch (m.mode) {
     case "void": {
-      // Nothing but a point of light, off centre by the recipe, and faint rings fading in.
-      const dy = m.a * 40;
-      for (let i = 1; i <= 6; i++) {
-        s += `<circle cx="500" cy="500" r="${i * 55}" fill="none" stroke="${m.light}" stroke-width="1" stroke-opacity=".${i < 4 ? "0" + (i + 1) : "1" + (i - 4)}"/>`;
-      }
-      s += `<circle cx="500" cy="${500 - dy}" r="${m.b ? 9 : 5}" fill="${m.accent}"/>`;
-      break;
+      if (ax <= 1 && dy >= -2 * m.a - 1 && dy <= -2 * m.a + 1) return SLOT.accent;
+      if (m.b && r === 2) return SLOT.light;
+      return r % 7 === 0 ? SLOT.dark : SLOT.body;
     }
     case "eclipse": {
-      const rays = 36;
-      s += `<g stroke="${m.light}" stroke-width="3">${rot(`<path d="M500 140V180"/>`, rays)}</g>`;
-      s += `<circle cx="500" cy="500" r="300" fill="${m.light}"/>`;
-      s += `<circle cx="${500 + m.a}" cy="${500 - (m.b ? m.a : 0)}" r="${300 - 12}" fill="${m.bg}"/>`;
-      break;
+      const off = 2 * m.a;
+      const shadow = (dx - off) ** 2 + (dy + (m.b ? off : 0)) ** 2 <= (2 * 17) ** 2;
+      if (r <= 18) return shadow ? SLOT.ground : r === 18 ? SLOT.accent : SLOT.light;
+      return (a & 7) === 0 ? SLOT.light : SLOT.body;
     }
     case "singularity": {
-      // Rings whose spacing shrinks toward the centre: a well.
-      let r = 350;
-      let gap = 40;
-      const count = 5 + m.a;
-      for (let i = 0; i < count && r > 20; i++) {
-        s += `<circle cx="500" cy="500" r="${r}" fill="none" stroke="${i % 2 ? m.dark : m.light}" stroke-width="${2 + (i >> 1)}"/>`;
-        gap = gap > 6 ? gap - 3 : 6;
-        r -= gap + (m.b ? 6 : 0);
-      }
-      s += `<circle cx="500" cy="500" r="${r > 20 ? r : 20}" fill="${m.bg}"/>`;
-      s += `<circle cx="500" cy="500" r="4" fill="${m.accent}"/>`;
-      break;
+      if (r <= 1) return SLOT.accent;
+      const band = Math.floor(m.a / (r + 2));
+      return (band & 1) === (m.b & 1) ? SLOT.dark : SLOT.light;
     }
     case "mobius": {
-      // Two bands, one over the other, each a fat dashed ellipse copied by the recipe.
-      const copies = m.a;
-      s += `<g fill="none" stroke-width="18">`;
-      for (let i = 0; i < copies; i++) {
-        const a = (i * 180) / copies;
-        s += `<ellipse cx="500" cy="500" rx="300" ry="110" stroke="${i % 2 ? m.light : m.dark}" stroke-dasharray="90 60" transform="rotate(${a} 500 500)"/>`;
-      }
-      s += `</g>`;
-      s += `<circle cx="500" cy="500" r="60" fill="${m.accent}"/>`;
-      break;
+      const A = m.a, B = m.b;
+      const e1 = dx * dx * B * B + dy * dy * A * A;
+      const e2 = dy * dy * B * B + dx * dx * A * A;
+      const lim = A * A * B * B;
+      const inner = Math.floor((lim * 9) / 16);
+      const in1 = e1 <= lim && e1 >= inner;
+      const in2 = e2 <= lim && e2 >= inner;
+      if (in1 && in2) return dx * dy > 0 ? SLOT.light : SLOT.dark;
+      if (in1) return SLOT.light;
+      if (in2) return SLOT.dark;
+      if (r <= 3) return SLOT.accent;
+      return SLOT.body;
     }
     case "prism": {
-      // Facets in a few colours around the centre.
-      const colors = m.b ? [m.accent, m.light, m.dark, m.body, m.ink] : [m.accent, "#2f7fd6", "#f0b429", "#4fd1a0", "#8a5cd6", "#c8323c"];
-      const n = m.a;
-      for (let i = 0; i < n; i++) {
-        const c = colors[i % colors.length];
-        s += `<path d="M500 500L500 140L${500 + 170} 190Z" fill="${c}" fill-opacity=".85" transform="rotate(${angle(i, n)} 500 500)"/>`;
-      }
-      s += `<circle cx="500" cy="500" r="70" fill="${m.body}" stroke="${m.dark}" stroke-width="3"/>`;
-      break;
+      if (r <= 5) return r === 5 ? SLOT.dark : SLOT.body;
+      const sectors = [SLOT.accent, SLOT.extra1, SLOT.extra2, SLOT.extra3, SLOT.light, SLOT.dark];
+      const idx = Math.floor((a * m.a) / 64) % sectors.length;
+      if (m.b && (a * m.a) % 64 < 2) return SLOT.ink;
+      return sectors[idx];
     }
     case "supernova": {
-      const rays = m.a;
-      s += `<g stroke="${m.light}" stroke-width="2">`;
-      for (let i = 0; i < rays; i++) {
-        const len = i % 3 === 0 ? 330 : i % 3 === 1 ? 250 : 190;
-        s += `<path d="M500 ${500 - 60}V${500 - len}" transform="rotate(${angle(i, rays)} 500 500)"/>`;
-      }
-      s += `</g>`;
-      s += `<circle cx="500" cy="500" r="${m.b ? 90 : 60}" fill="${m.light}"/><circle cx="500" cy="500" r="${m.b ? 50 : 30}" fill="${m.accent}"/>`;
-      break;
+      if (r <= 2) return SLOT.accent;
+      if (r <= 5) return SLOT.light;
+      const long = a % m.b < 2;
+      const short = a % m.a < 2 && r < 14;
+      return long || short ? SLOT.light : SLOT.body;
     }
     case "blacksun": {
-      s += `<g fill="${m.light}">${rot(`<path d="M480 150L500 60L520 150Z"/>`, m.a)}</g>`;
-      s += `<circle cx="500" cy="500" r="${m.b ? 230 : 260}" fill="${m.dark}" stroke="${m.accent}" stroke-width="6"/>`;
-      break;
+      if (r <= m.a) return r === m.a ? SLOT.accent : SLOT.dark;
+      if (r <= m.a + 4) return ((p.x + p.y) & 1) === 0 ? SLOT.light : m.b ? SLOT.accent : SLOT.body;
+      if (r <= RADIUS) return (a & 3) === 0 ? SLOT.light : r === RADIUS ? SLOT.dark : SLOT.body;
+      return SLOT.body;
     }
     case "mirror": {
-      // Left as is, right inverted, seam down the middle at the recipe angle.
-      const half = `<path d="M500 100A400 400 0 0 1 500 900Z" fill="${m.dark}"/>`;
-      s += `<g transform="rotate(${m.a * 45} 500 500)">${half}<circle cx="500" cy="500" r="120" fill="${m.dark}"/><path d="M500 380A120 120 0 0 1 500 620Z" fill="${m.body}"/><path d="M500 100V900" stroke="${m.accent}" stroke-width="3"/></g>`;
-      break;
+      const right = m.a === 0 ? dx > 0 : m.a === 1 ? dy > 0 : dx + dy > 0;
+      if (r <= CORE) return r === CORE ? SLOT.accent : right ? SLOT.body : SLOT.dark;
+      return right ? SLOT.dark : SLOT.body;
     }
     case "zero": {
-      s += `<circle cx="500" cy="500" r="${m.a ? 240 : 200}" fill="none" stroke="${m.dark}" stroke-width="${m.b ? 60 : 36}"/>`;
-      if (m.a === 2) s += `<rect x="470" y="180" width="60" height="640" fill="${m.dark}"/>`;
-      break;
+      if (r >= RADIUS - 1) return SLOT.dark;
+      if (r >= m.a && r <= m.b) return r === m.a || r === m.b ? SLOT.ink : SLOT.dark;
+      if (r <= 1) return SLOT.accent;
+      return SLOT.body;
     }
     case "fracture": {
-      const shards = m.a;
-      s += `<g stroke="${m.bg}" stroke-width="${m.b ? 14 : 10}" stroke-linejoin="round" fill="none">`;
-      for (let i = 0; i < shards; i++) {
-        s += `<path d="M500 500L${560 + i * 20} 300L${520 + i * 30} 110" transform="rotate(${angle(i, shards)} 500 500)"/>`;
-      }
-      s += `</g>`;
-      s += `<circle cx="500" cy="500" r="40" fill="${m.accent}"/>`;
-      break;
+      const step = Math.floor(256 / m.a);
+      if (a % step < 3 && r > 3) return SLOT.ground;
+      if (r === m.b && (a & 15) < 11) return SLOT.ground;
+      if (r <= 2) return SLOT.accent;
+      return lamp < -20 ? SLOT.light : SLOT.body;
     }
     case "genesis": {
-      const n = m.a;
-      s += `<g fill="none" stroke="${m.dark}" stroke-width="1.5">`;
-      for (let i = 0; i < n * 2; i++) {
-        s += `<ellipse cx="500" cy="500" rx="320" ry="90" transform="rotate(${Math.floor((i * 180) / n)} 500 500)"/>`;
-      }
-      s += `</g>`;
-      s += `<g fill="${m.light}">${rot(`<circle cx="500" cy="118" r="7"/>`, n * 4)}</g>`;
-      s += `<circle cx="500" cy="500" r="130" fill="${m.body}" stroke="${m.light}" stroke-width="10"/>`;
-      s += `<g fill="${m.accent}">${rot(`<path d="M500 390L520 470L500 500L480 470Z"/>`, m.b * 3)}</g>`;
-      break;
+      if (r <= 3) return SLOT.accent;
+      if (r <= CORE) return (a & 31) < 4 ? SLOT.accent : SLOT.light;
+      if (r === CORE + 1) return SLOT.dark;
+      if (((p.u + p.v) >> 1) % m.b === 0) return SLOT.light;
+      if (r % m.a === 0) return SLOT.dark;
+      return SLOT.body;
     }
     case "infinite": {
-      const r = 150;
-      s += `<g fill="none" stroke="${m.light}" stroke-width="${m.b ? 12 : 20}">`;
-      for (let i = 0; i < m.a; i++) {
-        s += `<g transform="rotate(${Math.floor((i * 180) / m.a)} 500 500)"><circle cx="${500 - r}" cy="500" r="${r}"/><circle cx="${500 + r}" cy="500" r="${r}"/></g>`;
-      }
-      s += `</g>`;
-      s += `<circle cx="500" cy="500" r="14" fill="${m.accent}"/>`;
-      break;
+      const off = 2 * m.a;
+      const r1 = isqrt((dx - off) ** 2 + dy * dy) >> 1;
+      const r2 = isqrt((dx + off) ** 2 + dy * dy) >> 1;
+      const R = m.a - 1;
+      const on1 = r1 >= R - 1 && r1 <= R;
+      const on2 = r2 >= R - 1 && r2 <= R;
+      if (on1 && on2) return SLOT.accent;
+      if (on1 || on2) return SLOT.light;
+      if (r1 < R - 1 || r2 < R - 1) return m.b ? SLOT.dark : SLOT.body;
+      return SLOT.body;
     }
     case "lattice": {
-      const n = m.a;
-      s += `<g fill="none" stroke="${m.dark}" stroke-width="2">`;
-      for (let k = -4; k <= 4; k++) {
-        s += rot(`<path d="M140 ${500 + k * 70}H860"/>`, n);
-      }
-      s += `</g>`;
-      s += `<circle cx="500" cy="500" r="${m.b ? 110 : 80}" fill="${m.light}"/>`;
-      break;
+      const gx = (ax >> 1) % m.a === 0, gy = (ay >> 1) % m.a === 0;
+      if (gx && gy) return m.b ? SLOT.accent : SLOT.light;
+      if (gx || gy) return SLOT.dark;
+      return SLOT.body;
     }
     case "spiral": {
-      // Compass spiral from alternating semicircles around two centres.
-      const d = m.a;
-      let path = `M500 500`;
-      let x = 500;
-      for (let i = 1; i <= 12; i++) {
-        const r = i * d;
-        const nx = i % 2 ? 500 + d + r : 500 - r;
-        path += `A${r} ${r} 0 0 ${i % 2 ? 1 : 0} ${nx} 500`;
-        x = nx;
-        if (r > 340) break;
-      }
-      s += `<path d="${path}" fill="none" stroke="${m.light}" stroke-width="${8 + m.b * 4}"/>`;
-      s += `<circle cx="500" cy="500" r="${8 + m.b * 6}" fill="${m.accent}"/>`;
-      break;
+      if (r <= 2) return SLOT.accent;
+      const turn = Math.floor((r * 4 + (a >> 2)) / m.a);
+      return (turn & 1) === 0 ? (m.b ? SLOT.light : SLOT.dark) : SLOT.body;
+    }
+    case "checker": {
+      const cell = m.a + 1;
+      const on = (((dx + 63) >> cell) + ((dy + 63) >> cell)) & 1;
+      if (r <= 2) return SLOT.accent;
+      return on === 0 ? (m.b ? SLOT.dark : SLOT.light) : m.b ? SLOT.body : SLOT.dark;
+    }
+    case "target": {
+      if (r <= 2) return SLOT.accent;
+      const band = Math.floor(r / m.a);
+      return (band & 1) === m.b ? SLOT.light : SLOT.dark;
+    }
+    case "hourglass": {
+      if (r <= 2) return SLOT.accent;
+      const wide = m.a ? ay > ax : ax > ay;
+      if (ax - ay > -2 && ax - ay < 2) return SLOT.ink;
+      return wide ? SLOT.dark : SLOT.light;
+    }
+    case "cross": {
+      const w = 2 * m.a;
+      if (ax < w && ay < w) return SLOT.accent;
+      if (ax < w || ay < w) return SLOT.light;
+      if (m.b && ax - ay > -2 && ax - ay < 2) return SLOT.dark;
+      return SLOT.body;
+    }
+    case "orbiter": {
+      if (r <= 4) return r === 4 ? SLOT.dark : SLOT.light;
+      const orbit = m.a;
+      const sat = r >= orbit - 1 && r <= orbit + 1 && a % m.b < 6;
+      if (sat) return SLOT.accent;
+      if (r === orbit) return SLOT.dark;
+      return SLOT.body;
+    }
+    case "maze": {
+      if (r <= 2) return SLOT.accent;
+      const cx = p.u >> m.a, cy = p.v >> m.a;
+      const h = hash32(cx, cy, d.salt * 0 + 77) % m.b;
+      return h === 0 ? SLOT.dark : SLOT.body;
+    }
+    case "pulse": {
+      const fib = [1, 2, 3, 5, 8, 13, 21];
+      if (r <= 0) return SLOT.accent;
+      for (const f of fib) if (r === f) return m.a ? SLOT.light : SLOT.dark;
+      return m.a ? SLOT.dark : SLOT.body;
+    }
+    case "ziggurat": {
+      const box = (ax > ay ? ax : ay) >> 1;
+      if (box <= 2) return SLOT.accent;
+      const band = Math.floor(box / m.a);
+      return (band & 1) === m.b ? SLOT.light : SLOT.dark;
+    }
+    case "comet": {
+      const head = (dx - 20) ** 2 + (dy - 20) ** 2 <= (2 * 5) ** 2;
+      if (head) return SLOT.accent;
+      const along = dx < 20 && dy < 20 && dx > -46 && dy > -46;
+      const width = Math.max(2, 14 - ((20 - dx) >> 2));
+      const across = dx - dy;
+      if (along && across > -width && across < width) return m.a ? SLOT.light : ((p.x + p.y) & 1) === 0 ? SLOT.light : SLOT.body;
+      return SLOT.body;
+    }
+    case "eye": {
+      const lens = dx * dx * 144 + dy * dy * 1296 <= 186624;
+      if (r <= 3) return SLOT.ink;
+      if (r <= 6) return r === 6 ? SLOT.dark : SLOT.accent;
+      if (lens) return m.a ? SLOT.dark : SLOT.light;
+      const edge = dx * dx * 144 + dy * dy * 1296 <= 230000;
+      if (edge) return SLOT.dark;
+      return SLOT.body;
+    }
+    case "crown": {
+      if (r <= 3) return SLOT.accent;
+      if (ay < 4) return SLOT.dark;
+      if (dy < 0 && a % m.a < 3) return SLOT.light;
+      if (dy > 0 && m.b && r % 4 === 0) return SLOT.dark;
+      return SLOT.body;
     }
   }
-  s += rim(m);
-  s += fingerprintTicks(input.seed, inkOnBody);
-  return { svg: s, bg: m.bg, ink: inkOnBody };
 }
