@@ -352,7 +352,7 @@ export type CoinInput = {
   /** Token number inside the series, 1-based. */
   number: number;
   series: number;
-  /** Backing class in whole USDC: 10, 25 or 50. */
+  /** Backing class in whole USDC: 5, 10, 25 or 50. */
   backing: number;
   /** Lifetime yield over backing in basis points. */
   yieldBps: number;
