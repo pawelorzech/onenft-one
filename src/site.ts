@@ -12,6 +12,7 @@ import {
   ANOMALIES, ANOMALY_WEIGHTS, MASTERS, YIELD_STEPS, fingerprint, roman, type Coin, type Traits,
 } from "./coin.ts";
 import { SERIES_SIZE, MASTERS_PER_SERIES, FOUNDER_PER_SERIES, BACKINGS, PREVIEW_SUPPLY, previewCoin, previewInput, mastersFound } from "./preview.ts";
+import { sizePicker, downloadBar, downloadScript } from "./wallet.ts";
 
 export const SITE = "one.onenft.click";
 export const NAME = "ONE";
@@ -27,6 +28,10 @@ export type Colors = { bg: string; fg: string };
 export const num = (n: number | bigint) => n.toLocaleString("en-US");
 export function esc(t: string): string {
   return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+export function shortAddr(a: string): string {
+  return a.length >= 10 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
 }
 export const pctOf = (p: number) => (p >= 10 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toFixed(2)) + "%";
 export const pad5 = (n: number) => String(n).padStart(5, "0");
@@ -173,6 +178,25 @@ table.tr td.n{text-align:right;font-family:"Syne",system-ui,sans-serif;font-weig
 .top nav a,.nav a,footer nav a{font-family:"Syne",system-ui,sans-serif;font-weight:700;font-size:14px;letter-spacing:.01em;text-decoration:none;color:var(--muted);display:inline-flex;align-items:center;min-height:44px}
 .top nav a:hover,.nav a:hover,footer nav a:hover{color:var(--fg);text-decoration:underline;text-underline-offset:4px}
 .top nav,footer nav{gap:2px 24px}
+.whobox{display:flex;flex-direction:column;gap:8px}
+.wname{overflow-wrap:normal;word-break:keep-all}
+.who{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;max-width:720px}
+.who form{display:flex;flex-direction:column;gap:8px;flex:1;min-width:280px}
+.who form .line{display:flex;gap:12px}
+.who label{font-size:15px;color:var(--muted)}
+.who .cta{min-height:48px;height:48px;padding:0 22px;font-size:17px;width:auto}
+button.cta{border:0;cursor:pointer;font-family:"Syne",system-ui,sans-serif}
+button.cta[disabled]{opacity:.55;cursor:default}
+.field{height:48px;padding:0 16px;border:1px solid var(--edge);background:transparent;color:var(--fg);flex:1;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:15px}
+.field::placeholder{color:var(--muted)}
+.msg{font-size:15px;color:var(--muted);min-height:1.5em;margin:0}
+.btn[aria-busy="true"]{opacity:.6;cursor:progress}
+.btn{cursor:pointer}
+.sizes{display:flex;border:1px solid var(--edge)}
+.sizes button{padding:0 14px;min-height:46px;display:flex;align-items:center;font-size:14px;color:var(--muted);border:0;border-right:1px solid var(--line);background:transparent;font-family:"Syne",system-ui,sans-serif;cursor:pointer}
+.sizes button:last-child{border-right:0}
+.sizes button[aria-pressed="true"]{background:var(--soft);color:var(--fg);font-weight:700}
+pre.snip{margin:0;padding:14px;background:var(--soft);overflow-x:auto;font-size:13px;line-height:1.5;font-family:ui-monospace,Menlo,monospace}
 .levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
 .levels img{width:100%;aspect-ratio:1;display:block;box-shadow:0 0 0 1px var(--line)}
 .levels .cap{font-size:14px;color:var(--muted);margin-top:6px}
@@ -236,7 +260,7 @@ export function crumb(current?: string): string {
   const here = current ? `<li><span class="sep syne" aria-hidden="true">/</span><span aria-current="page">${esc(current)}</span></li>` : "";
   return `<nav class="crumb" aria-label="Breadcrumb"><ol><li><a class="mark syne hub" href="https://${PARENT}">${PARENT}</a></li><li><span class="sep syne" aria-hidden="true">/</span><a class="mark syne" href="/"${current ? "" : ' aria-current="page"'}>${NAME}</a></li>${here}</ol></nav>`;
 }
-export const MENU: [string, string][] = [["/coins", "All coins"], ["/masters", "Master Coins"], ["/traits", "Traits"], ["/yield", "Yield ring"], ["/how", "How it works"]];
+export const MENU: [string, string][] = [["/coins", "All coins"], ["/masters", "Master Coins"], ["/traits", "Traits"], ["/yield", "Yield ring"], ["/assets", "Assets"], ["/how", "How it works"], ["/yours", "Your wallet"]];
 export function menu(extra: [string, string][] = []): string {
   return [...MENU, ...extra].map(([h, t]) => `<a href="${h}">${t}</a>`).join("");
 }
@@ -251,7 +275,7 @@ export const STEP_KEYS = `<script>
 </script>`;
 
 export function previewNote(): string {
-  return PREVIEW ? `<p class="note" role="status">Preview. No contract is live yet. The coins on this site come from a simulated series with the same rules; seeds, numbers and yield are not real.</p>` : "";
+  return PREVIEW ? `<p class="note" role="status">Preview. No contract is live and nothing is minted. The coins on this site are a simulated series drawn with the same rules, so you can see what minting will give; their seeds, numbers, owners and yield are not real.</p>` : "";
 }
 
 // ---- traits and odds
@@ -362,8 +386,8 @@ ${crumb(current)}
 <a class="cta syne" href="/how" aria-disabled="${PREVIEW ? "true" : "false"}">${PREVIEW ? "Minting opens with the contract" : "Mint a coin"}</a>
 <ul class="facts">
 <li><span class="fig syne">${roman(1)}</span><span class="lab">series, ${num(SERIES_SIZE)} coins each, series without end</span></li>
-<li><span class="fig syne">${num(PREVIEW_SUPPLY)}</span><span class="lab">of ${num(SERIES_SIZE)} minted${PREVIEW ? " in the preview" : ""}</span></li>
-<li><span class="fig syne">${found} of ${MASTERS_PER_SERIES}</span><span class="lab">Master Coins found so far</span></li>
+<li><span class="fig syne">${PREVIEW ? 0 : num(PREVIEW_SUPPLY)}</span><span class="lab">of ${num(SERIES_SIZE)} minted${PREVIEW ? "; minting opens with the contract" : ""}</span></li>
+<li><span class="fig syne">${PREVIEW ? 0 : found} of ${MASTERS_PER_SERIES}</span><span class="lab">Master Coins found${PREVIEW ? ` (${found} in the ${num(PREVIEW_SUPPLY)} preview coins)` : " so far"}</span></li>
 <li><span class="fig syne">${FEE_PCT}%</span><span class="lab">of the yield goes to the author; nothing else does</span></li>
 </ul>
 <nav class="nav" aria-label="Site">${menu([[`https://${PARENT}`, "All collections"]])}</nav>
@@ -379,16 +403,16 @@ export function homePage(): string {
   const body = `<div class="page">${sidebar()}<main id="main">
 ${previewNote()}
 <section class="hero"><img class="coinimg px" src="/coin/${newest}.svg" alt="Coin ${pad5(newest)}" width="396" height="396"><div class="meta">
-<span class="small">Newest coin</span>
+<span class="small">${PREVIEW ? "Newest preview coin" : "Newest coin"}</span>
 <span class="num syne">#${pad5(newest)}</span>
 <div>${coinTags(c, inp.founder)}</div>
 ${traitList(c)}
 ${moneyBlock(inp, c.yieldLevel)}
 <a class="btn" href="/coin/${newest}">Open the coin</a>
 </div></section>
-<div class="counts"><div><b class="syne">${num(newest)}</b><span class="small">minted</span></div><div><b class="syne">${num(SERIES_SIZE - newest)}</b><span class="small">left in series ${roman(1)}</span></div><div><b class="syne">${mastersFound().size}</b><span class="small">Master Coins found</span></div></div>
+<div class="counts"><div><b class="syne">${PREVIEW ? 0 : num(newest)}</b><span class="small">minted</span></div><div><b class="syne">${num(PREVIEW ? SERIES_SIZE : SERIES_SIZE - newest)}</b><span class="small">left in series ${roman(1)}</span></div><div><b class="syne">${num(newest)}</b><span class="small">${PREVIEW ? "preview coins to browse" : "coins"}</span></div></div>
 ${rows}
-<p class="small" style="padding:20px 34px"><a href="/coins">All ${num(newest)} coins</a></p>
+<p class="small" style="padding:20px 34px"><a href="/coins">All ${num(newest)} ${PREVIEW ? "preview coins" : "coins"}</a></p>
 ${footer()}
 </main></div>`;
   return layout(`${NAME} | ${DESC.split(".")[0]}`, p, body);
@@ -407,7 +431,7 @@ export function coinsPage(page: number): string {
     cells.push(`<a class="px" href="/coin/${n}"><img src="/coin/${n}.svg" alt="Coin ${pad5(n)}" loading="lazy"><div class="cap"><b>#${pad5(n)}</b> ${esc(c.masterName || c.traits.material)}</div></a>`);
   }
   const nav = `<div class="step">${pg > 1 ? `<a rel="prev" href="/coins?page=${pg - 1}" aria-label="Newer">‹</a>` : `<span class="gone"></span>`}${pg < pages ? `<a rel="next" href="/coins?page=${pg + 1}" aria-label="Older">›</a>` : `<span class="gone"></span>`}</div>`;
-  const body = `<main id="main" class="wide">${topBar("All coins")}${previewNote()}<h2 class="syne">Coins ${pad5(from)} to ${pad5(to)}</h2><p class="small">Page ${pg} of ${pages}, newest first.</p>${nav}<div class="strip">${cells.join("")}</div>${nav}${footer()}${STEP_KEYS}</main>`;
+  const body = `<main id="main" class="wide">${topBar("All coins")}${previewNote()}<h2 class="syne">${PREVIEW ? "Preview coins" : "Coins"} ${pad5(from)} to ${pad5(to)}</h2><p class="small">Page ${pg} of ${pages}, newest first.</p>${nav}<div class="strip">${cells.join("")}</div>${nav}${footer()}${STEP_KEYS}</main>`;
   return layout(`All coins, page ${pg} | ${NAME}`, p, body, "/newest.png", `/coins?page=${pg}`);
 }
 
@@ -420,12 +444,13 @@ export function coinPage(n: number): string {
 <div class="step">${prev}${next}</div>
 <img class="coinimg px" src="/coin/${n}.svg" alt="Coin ${pad5(n)}" width="512" height="512">
 <span class="num syne">#${pad5(n)}</span>
-<div>${coinTags(c, inp.founder)}<span class="small">${c.masterName ? `Master Coin ${esc(c.masterName)}` : "Procedural coin"}, series ${roman(inp.series)}, seed ${fingerprint(inp.seed)}</span></div>
+<div>${coinTags(c, inp.founder)}<span class="small">${PREVIEW ? "Preview coin, " : ""}${c.masterName ? `Master Coin ${esc(c.masterName)}` : "procedural coin"}, series ${roman(inp.series)}, seed ${fingerprint(inp.seed)}</span></div>
 ${traitList(c)}
 ${moneyBlock(inp, c.yieldLevel)}
 <p class="small">The top eight hex digits of the seed are written under the coin; the low 32 bits are the ${32} marks on the inner rim, light for one, dark for zero. The ring outside the coin is its yield: level ${c.yieldLevel} of ${YIELD_STEPS.length}. It grows with lifetime yield and never resets, not on a claim, not on a transfer.</p>
-<div class="dl"><span class="lab">Download</span><a class="btn" href="/coin/${n}.svg" download="one-coin-${n}.svg">SVG</a><a class="btn" href="/coin/${n}-1024.png" download="one-coin-${n}-1024.png">PNG 1024</a><a class="btn" href="/api/coin/${n}">JSON</a></div>
-${footer()}${STEP_KEYS}</main>`;
+${sizePicker()}
+${downloadBar(n, c.palette.bg)}
+${footer()}${STEP_KEYS}${downloadScript()}</main>`;
   const line = c.masterName ? `Master Coin ${c.masterName}` : [c.traits.material, c.traits.field, c.traits.glyph, c.traits.rim].join(", ");
   return layout(`Coin ${pad5(n)} | ${NAME}`, c.palette, body, `/coin/${n}.png`, `/coin/${n}`, `${line}. ${inp.backing} USDC backing, yield ${bpsPct(inp.yieldBps)}.`);
 }

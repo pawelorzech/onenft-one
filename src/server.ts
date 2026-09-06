@@ -8,6 +8,10 @@ import { PREVIEW_SUPPLY, previewCoin, previewInput, coinOfSeed } from "./preview
 import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, notFound, pad5, bpsPct } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
+import { yoursPage, holderPage, assetsPage } from "./pages.ts";
+import { goTarget } from "./wallet.ts";
+import { resolveHolder, resolveFailed, ensNames } from "./ens.ts";
+import { isAddress, type Address } from "viem";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BOOT_AT = Date.now();
@@ -34,7 +38,7 @@ export async function handle(req: Request): Promise<Response> {
     return text("bad request", 400);
   }
   try {
-    return withHeaders(route(url));
+    return withHeaders(await route(url));
   } catch (e) {
     console.error(`route ${url.pathname}:`, (e as Error).message);
     return withHeaders(url.pathname.startsWith("/api/") ? json({ error: "internal error" }, 0, 500) : text("internal error", 500));
@@ -47,7 +51,9 @@ function idOf(s: string): number | null {
   return Number.isInteger(n) && n >= 1 && n <= PREVIEW_SUPPLY ? n : null;
 }
 
-function route(url: URL): Response {
+const redirect = (to: string, status = 302) => new Response(null, { status, headers: { location: to } });
+
+async function route(url: URL): Promise<Response> {
   const path = url.pathname;
   if (path === "/health") return text(`ok, preview supply ${PREVIEW_SUPPLY}, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);
   if (path === "/ready") return json({ ok: true, preview: true, totalSupply: PREVIEW_SUPPLY }, 0);
@@ -59,9 +65,9 @@ function route(url: URL): Response {
   if (path === "/yield") return html(yieldPage());
   if (path === "/how") return html(howPage());
   if (path === "/api/state") return json(stateJson(), 15);
-  if (path === "/yours") return new Response(null, { status: 302, headers: { location: "/coins" } });
-  const holder = path.match(/^\/api\/holder\/(0x[0-9a-fA-F]{40}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.eth)$/i);
-  if (holder) return json(holderJson(holder[1]), 15);
+  if (path === "/assets") return html(assetsPage());
+  if (path === "/yours") return html(yoursPage(url.searchParams.get("bad")));
+  if (path === "/go") return redirect(goTarget(url.searchParams.get("who")));
 
   // The newest coin as the site's own image.
   if (path === "/newest.svg" || path === "/newest.png") {
@@ -106,6 +112,18 @@ function route(url: URL): Response {
     return html(coinPage(n));
   }
 
+  const holder = path.match(/^\/(api\/holder\/)?(0x[0-9a-fA-F]{40}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.eth)$/i);
+  if (holder) {
+    const who = await resolveHolder(holder[2]);
+    if (!who || !isAddress(who)) {
+      const failed = resolveFailed(holder[2]);
+      if (holder[1]) return json({ error: failed ? "ENS did not answer" : "no such name" }, 0, failed ? 503 : 404);
+      return html(notFound(failed ? "ENS did not answer. Try the name again in a minute, or use the address." : `No wallet answers to ${holder[2]}.`), failed ? 503 : 404);
+    }
+    if (holder[1]) return json(holderJson(who), 15);
+    const names = await ensNames([who]);
+    return html(holderPage(who as Address, holder[2], names.get(who.toLowerCase()) ?? null));
+  }
   if (path.startsWith("/api/")) return json({ error: "no such endpoint" }, 0, 404);
   return html(notFound(), 404);
 }
