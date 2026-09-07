@@ -1,3 +1,4 @@
+import { readChain, sendWithTimeout } from "./chain-read.ts";
 import { walletErrorScript } from "./wallet-errors.ts";
 /**
  * Page HTML. The page has no palette of its own: it wears the ground and ink
@@ -593,6 +594,8 @@ function addr(a){return a.slice(2).toLowerCase().padStart(64,'0')}
 function reverted(e){var blob='';try{blob=JSON.stringify(e)}catch(x){}blob=(blob+' '+((e&&e.message)||'')).toLowerCase();
   for(var i=0;i<CFG.reverts.length;i++)if(blob.indexOf(CFG.reverts[i][0].toLowerCase())>=0)return CFG.reverts[i][1];return null}
 ${walletErrorScript}
+${readChain.toString()}
+${sendWithTimeout.toString()}
 var sendPhase='before',sentHash=null;
 function failed(e){return walletErrorMessage(e,{phase:sendPhase,hash:sentHash,network:CFG.name,contractMessage:reverted(e)})}
 function money(u){var w=u/1000000n;var c=(u%1000000n)/10000n;return w.toString()+'.'+c.toString().padStart(2,'0')+' USDC'}
@@ -621,9 +624,9 @@ async function checkWallet(){
   if(!accs||!accs[0]||accs[0].toLowerCase()!==account.toLowerCase())throw new Error('The wallet account changed. Switch back to the original account to continue.');
 }
 async function sendTransaction(tx){
-  sendPhase='before';sentHash=null;await checkWallet();sendPhase='sending';
-  var previous=rec(account);keep(account,{stage:'uncertain'});
-  try{var hash=await eth.request({method:'eth_sendTransaction',params:[tx]});sendPhase='sent';sentHash=hash;return hash}
+  sendPhase='before';sentHash=null;await checkWallet();
+  var previous=rec(account);localStorage.setItem(key(account),JSON.stringify({stage:'uncertain'}));sendPhase='sending';
+  try{var hash=await sendWithTimeout(eth,tx);sendPhase='sent';sentHash=hash;return hash}
   catch(e){
     var definite=e&&e.code===4001||reverted(e)||/insufficient funds|insufficient.*eth|funds for gas|allowance/i.test((e&&e.message)||'');
     if(definite){sendPhase='before';if(previous)keep(account,previous);else drop(account)}
@@ -635,8 +638,8 @@ function checkUncertain(){
   if(!confirm('Check your wallet activity on '+CFG.name+' first. If a transaction exists, wait for its result. Clear this warning only if your wallet confirms that no transaction was sent. Have you confirmed that nothing was sent?')){offerCheck(checkUncertain);return}
   drop(account);sendPhase='before';sentHash=null;lock(false);say('The warning is cleared. You can try minting again.');
 }
-async function receipt(hash){try{return await eth.request({method:'eth_getTransactionReceipt',params:[hash]})}catch(e){return null}}
-async function call(to,data){var v=await eth.request({method:'eth_call',params:[{to:to,data:data},'latest']});return (!v||v==='0x')?0n:BigInt(v)}
+async function receipt(hash){try{return (await readChain('/api/transaction/'+hash,CFG.chainHex,CFG.address)).receipt}catch(e){return null}}
+async function call(to,data){var r=await readChain('/api/token-read?to='+to+'&data='+data,CFG.chainHex,CFG.address);if(typeof r.value!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(r.value))throw new Error('The token balance could not be read. No new transaction was sent.');return BigInt(r.value)}
 async function wait(hash,what){
   for(var i=0;i<60;i++){var r=await receipt(hash);if(r)return r;await sleep(document.hidden?4000:2500)}
   show('We cannot confirm '+what+' yet. Check its status before trying again.',hash);return null;
@@ -671,7 +674,7 @@ async function watch(ids){
   say('Your mint is confirmed, but Chainlink has not returned the seed yet. Do not mint again to reveal these coins. Check again later or open your wallet page; the coins remain sealed until a response arrives.');lock(false);offerCheck(function(){watch(ids)});
 }
 async function switchChain(){
-  try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
+  if(BigInt(await eth.request({method:'eth_chainId'}))!==BigInt(CFG.chainHex))try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
   catch(e){if(e&&e.code===4902){await eth.request({method:'wallet_addEthereumChain',params:[{chainId:CFG.chainHex,chainName:CFG.name,rpcUrls:[CFG.rpc],nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18},blockExplorerUrls:[CFG.explorer]}]})}else{throw e}}
 }
 /** The Chainlink fee rides along as value; the contract passes it straight to its subscription. */
@@ -703,7 +706,7 @@ async function afterApprove(r){
 }
 /** Picks up whatever this wallet left behind: a sealed batch, a mint in flight, an approval in flight. */
 async function resume(r){
-  sendPhase='before';sentHash=null;await checkWallet();
+  sendPhase='before';sentHash=null;if(r.stage==='approve')await checkWallet();
   if(r.stage==='uncertain'){say(walletErrorMessage(null,{phase:'sending',network:CFG.name}));offerCheck(checkUncertain);lock(false);return}
   if(r.stage==='sealed'&&r.ids&&r.ids.length)return watch(r.ids);
   if(r.stage==='approve'&&r.hash)return afterApprove(r);
@@ -801,6 +804,8 @@ export function actionScript(chain: ChainState | null): string {
 var CFG=${cfg};if(!CFG.address)return;
 var eth=window.ethereum;var acts=document.querySelectorAll('[data-act]');if(!acts.length)return;
 ${walletErrorScript}
+${readChain.toString()}
+${sendWithTimeout.toString()}
 var out=document.getElementById('msg');
 function say(t){if(out)out.textContent=t}
 function show(t,h){if(!out)return;out.textContent=t;if(h)out.insertAdjacentHTML('beforeend',' <a href="'+CFG.explorer+'/tx/'+h+'" target="_blank" rel="noopener">View transaction</a>')}
@@ -830,24 +835,26 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
       if(confirm('Check your wallet activity first. Clear the pending warning only if your wallet confirms that no transaction was sent. Have you confirmed that nothing was sent?')){pendingDrop(pkey);say('The warning is cleared. Choose the action again when you are ready.')}
       return;
     }
-    try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
+    if(!(old&&old.hash)){
+    if(BigInt(await eth.request({method:'eth_chainId'}))!==BigInt(CFG.chainHex))try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:CFG.chainHex}]})}
     catch(e){if(e&&e.code===4902){await eth.request({method:'wallet_addEthereumChain',params:[{chainId:CFG.chainHex,chainName:CFG.name,rpcUrls:[CFG.rpc],nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18},blockExplorerUrls:[CFG.explorer]}]})}else{throw e}}
     // Check the context again after the wallet's asynchronous network prompt.
     var network=await eth.request({method:'eth_chainId'}),current=await eth.request({method:'eth_accounts'});
     if(parseInt(network,16)!==parseInt(CFG.chainHex,16))throw new Error('wrong network');
     if(!current||!current[0]||current[0].toLowerCase()!==from.toLowerCase())throw new Error('wallet account changed');
+    }
     hash=old&&old.hash;
     if(!hash){
       say('Confirm in your wallet.');
       var data=(act==='claim'?CFG.sel.claim:CFG.sel.redeem)+word(BigInt(id));
-      pendingPut(pkey,{uncertain:true});phase='sending';
-      hash=await eth.request({method:'eth_sendTransaction',params:[{from:from,to:CFG.address,data:data}]});
+      localStorage.setItem(pkey,JSON.stringify({uncertain:true}));phase='sending';
+      hash=await sendWithTimeout(eth,{from:from,to:CFG.address,data:data});
       pendingPut(pkey,{hash:hash});
     }
     phase='sent';
     show('Sent. Waiting for confirmation.',hash);
     for(var i=0;i<60;i++){
-      var r=null;try{r=await eth.request({method:'eth_getTransactionReceipt',params:[hash]})}catch(e){}
+      var r=null;try{r=(await readChain('/api/transaction/'+hash,CFG.chainHex,CFG.address)).receipt}catch(e){}
       if(r){pendingDrop(pkey);if(r.status==='0x1'){show(act==='claim'?'The yield is in your wallet. Refreshing holdings.':'The coin is burned and the USDC is in your wallet. Refreshing holdings.',hash);await sleep(2000);var next=new URL(location.href);next.searchParams.set('refresh','1');if(r.blockNumber)next.searchParams.set('afterBlock',BigInt(r.blockNumber).toString());location.href=next.href;return}
         show('The network rejected the transaction. Nothing was spent beyond gas.',hash);break}
       await sleep(2500);

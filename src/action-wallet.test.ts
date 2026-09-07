@@ -14,10 +14,11 @@ function harness(mode: 'success'|'unknown'|'pending'|'rejected'|'account') {
  let sends=0;
  runInNewContext(actionScript({address:contract,chainId:8453} as unknown as ChainState).replace(/^<script>\s*/,'').replace(/<\/script>$/,''), {
  document:{querySelectorAll:()=>[button],getElementById:()=>out}, URL,location,confirm:()=>false,
- setTimeout:(fn:()=>void)=>queueMicrotask(fn),localStorage:{getItem:()=>saved,setItem:(_k:string,v:string)=>{saved=v},removeItem:()=>{saved=null}},
+ fetch:async()=>({ok:true,json:async()=>({chainId:8453,contract,receipt:mode==='pending'?null:{status:'0x1',blockNumber:'0x123'}})}),AbortController,clearTimeout(){},
+ setTimeout:(fn:()=>void,ms:number)=>{if(ms<10000)queueMicrotask(fn);return 1},localStorage:{getItem:()=>saved,setItem:(_k:string,v:string)=>{saved=v},removeItem:()=>{saved=null}},
  window:{ethereum:{on(){},request:async({method}: {method:string})=>{
  if(method==='eth_requestAccounts'||method==='eth_accounts')return [selected];
- if(method==='eth_chainId')return '0x2105';
+ if(method==='eth_chainId')return mode==='account'&&selected===account?'0x1':'0x2105';
  if(method==='wallet_switchEthereumChain'){if(mode==='account')selected=contract;return null;}
  if(method==='eth_sendTransaction'){sends++;if(mode==='unknown')throw new Error('RPC timeout https://secret.invalid/key');if(mode==='rejected')throw Object.assign(new Error('no'),{code:4001});return hash;}
  if(method==='eth_getTransactionReceipt')return mode==='pending'?null:{status:'0x1',blockNumber:'0x123'};

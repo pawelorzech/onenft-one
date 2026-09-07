@@ -1,3 +1,4 @@
+import { transactionApi } from "./transaction-status.ts";
 import { mintPage } from "./mint-page.ts";
 /**
  * The server. Every page that shows a coin reads the chain through the cache
@@ -22,6 +23,7 @@ import { resolveHolder, resolveFailed, ensNames } from "./ens.ts";
 import { startKeeper, keeperInfo } from "./keeper.ts";
 import { isAddress, type Address, type Hex } from "viem";
 
+const transactionRead = transactionApi({ address: CONTRACT, chainId: CHAIN_ID, tokenReads: true });
 const PORT = Number(process.env.PORT ?? 3000);
 const BOOT_AT = Date.now();
 
@@ -71,6 +73,8 @@ function recentOwners(chain: ChainState, n = 40): string[] {
 
 async function route(url: URL): Promise<Response> {
   const path = url.pathname;
+  const transactionResponse = await transactionRead(url);
+  if (transactionResponse) return transactionResponse;
 
   // ---- everything that needs no chain answers before any chain read
   if (path === "/health") return text(`ok, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);

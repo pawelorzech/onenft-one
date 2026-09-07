@@ -29,13 +29,10 @@ async function resumeApproval(network: string, changeAfterReceipt = false, conti
         if (continueMode === "account") selected = C;
         return null;
       }
-      if (method === "eth_getTransactionReceipt") {
-        if (changeAfterReceipt) selected = C;
-        return { status: "0x1", logs: [] };
-      }
       if (method === "eth_sendTransaction") { if(sendFailure) throw new Error(sendFailure); return "0x" + "b".repeat(64); }
       throw new Error(`unexpected request ${method}`);
     } } },
+    fetch:async()=>{if(changeAfterReceipt)selected=C;return {ok:true,json:async()=>({chainId:8453,contract:C,receipt:{status:'0x1',logs:[]}})}},AbortController,
     setTimeout, clearTimeout,
   });
   await Bun.sleep(30);

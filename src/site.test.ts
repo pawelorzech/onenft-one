@@ -139,7 +139,7 @@ test("home with a contract: the newest coin, the mint box, the counts from the c
 
 test("the mint script approves the exact total, keeps the transaction per chain, contract and wallet, and polls the sealed coins", () => {
   const h = homePage(fakeChain(), OK);
-  for (const s of ["onenft_mint:", "eth_requestAccounts", "wallet_switchEthereumChain", "CFG.sel.approve", "CFG.sel.mint", "/api/coin/", "j.sealed===false", "eth_getTransactionReceipt", "balanceOf", "allowance", "accountsChanged", "founder-box", "mintFounder"]) expect(h).toContain(s);
+  for (const s of ["onenft_mint:", "eth_requestAccounts", "wallet_switchEthereumChain", "CFG.sel.approve", "CFG.sel.mint", "/api/coin/", "j.sealed===false", "/api/transaction/", "balanceOf", "allowance", "accountsChanged", "founder-box", "mintFounder"]) expect(h).toContain(s);
   expect(h).toContain('id="founder-box" hidden');
 });
 
