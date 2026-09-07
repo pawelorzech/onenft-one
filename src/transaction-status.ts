@@ -1,8 +1,9 @@
-import { createPublicClient, http, parseAbi, type Address, type Hex } from "viem";
+import { createPublicClient, fallback, http, parseAbi, type Address, type Hex } from "viem";
 
 /** Only fixed-chain receipts and ONE's two USDC reads; never a general RPC proxy. */
-export function transactionApi(config: { address: string; chainId: number; tokenReads?: boolean }, injected?: { receipt(hash: Hex): Promise<unknown>; usdc(): Promise<string>; call(to: Address, data: Hex): Promise<unknown> }) {
-  const client = createPublicClient({ transport: http(process.env.BASE_RPC_URL || (config.chainId === 8453 ? "https://mainnet.base.org" : "https://sepolia.base.org"), { timeout: 8000, retryCount: 0 }) });
+export function transactionApi(config: { address: string; chainId: number; tokenReads?: boolean; rpcUrls?: string[] }, injected?: { receipt(hash: Hex): Promise<unknown>; usdc(): Promise<string>; call(to: Address, data: Hex): Promise<unknown> }) {
+  const urls = [...new Set(config.rpcUrls ?? [process.env.BASE_RPC_URL, config.chainId === 8453 ? "https://mainnet.base.org" : "https://sepolia.base.org", config.chainId === 8453 ? "https://base-rpc.publicnode.com" : "https://base-sepolia-rpc.publicnode.com"].filter((v): v is string => !!v))];
+  const client = createPublicClient({ transport: fallback(urls.map(url => http(url, { timeout: 3000, retryCount: 0 })), { retryCount: 0 }) });
   const deps = injected ?? {
     async receipt(hash: Hex) {
       try { const r = await client.getTransactionReceipt({ hash }); return { status: r.status === "success" ? "0x1" : "0x0", blockNumber: "0x" + r.blockNumber.toString(16), logs: r.logs.map(l => ({ address: l.address, topics: l.topics, data: l.data })) }; }
@@ -27,6 +28,6 @@ export function transactionApi(config: { address: string; chainId: number; token
       const value = await deps.call(to as Address, data as Hex);
       if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error("invalid token result");
       return reply({ value });
-    } catch { return reply({ error: "chain read unavailable; try again" }, 503); }
+    } catch (e) { console.error("transaction-read:", (e as Error).name, String((e as {shortMessage?: string}).shortMessage ?? "read failed").replace(/https?:\/\/\S+/g, "[rpc]").slice(0,180)); return reply({ error: "chain read unavailable; try again" }, 503); }
   };
 }

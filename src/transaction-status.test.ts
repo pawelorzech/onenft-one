@@ -26,3 +26,15 @@ test("USDC reads reject arbitrary targets, selectors, spender and malformed resu
  expect((await read(token,'0xdd62ed3e'+token.slice(2).padStart(64,'0')+token.slice(2).padStart(64,'0')))!.status).toBe(400);
  expect(calls).toBe(1);value='0x';expect((await read(token,balance))!.status).toBe(503);
 });
+
+
+test("failed primary RPC falls back to another endpoint for receipts", async () => {
+ let first=0,second=0;
+ const a=Bun.serve({port:0,fetch:()=>{first++;return new Response('unavailable',{status:503})}});
+ const b=Bun.serve({port:0,fetch:async req=>{second++;const j=await req.json();return Response.json({jsonrpc:'2.0',id:j.id,result:{status:'0x1',blockNumber:'0x123',logs:[],transactionHash:hash,gasUsed:'0x1',cumulativeGasUsed:'0x1',effectiveGasPrice:'0x1',transactionIndex:'0x0',type:'0x2'}})}});
+ try{
+  const api=transactionApi({address,chainId:8453,rpcUrls:[`http://localhost:${a.port}`,`http://localhost:${b.port}`]});
+  const r=(await api(url('/api/transaction/'+hash)))!;
+  expect(r.status).toBe(200);expect((await r.json()).receipt.status).toBe('0x1');expect(first).toBe(1);expect(second).toBe(1);
+ }finally{a.stop(true);b.stop(true)}
+});
