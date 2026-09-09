@@ -16,7 +16,7 @@ export function yoursPage(chain: ChainState | null, status: ChainStatus | null =
 ${topBar("Your wallet")}
 ${staleNote(status)}
 ${noContractNote(status)}
-<div><h2 class="syne">Your coins</h2><p class="lead" style="margin-top:8px">Connect a wallet or type an address, and this page lists every coin it holds with its backing, its yield and its ring, each one ready to save as SVG, PNG or JPEG, and each one ready to claim or burn.</p></div>
+<div><h1 class="syne">Your coins</h1><p class="lead" style="margin-top:8px">Connect a wallet or type an address, and this page lists every coin it holds with its backing, its yield and its ring, each one ready to save as SVG, PNG or JPEG, and each one ready to claim or burn.</p></div>
 ${bad !== null ? `<p class="note" role="alert">"${esc(bad)}" is not a wallet address or an ENS name. An address is 42 characters starting with 0x; a name ends in .eth.</p>` : ""}
 ${whoBlock(Boolean(chain))}
 <p class="small">Viewing a wallet needs no transaction and no signature. Its public address appears in the page URL and is sent to this site to load its tokens. The same list is on <a href="https://${PARENT}/wallet">${PARENT}</a> for every collection at once; each site connects on its own.</p>
@@ -53,7 +53,7 @@ ${downloadBar(c.id, coin.palette.bg)}
 ${topBar(rawName)}
 ${staleNote(status)}
 ${dataNote(chain)}
-<div><h2 class="syne">${nameHeading(rawName)}</h2><p class="lead" style="margin-top:8px">${mine.length ? `${mine.length} ${plural(mine.length, "coin", "coins")}${isAuthor(chain, who) ? ", the author's wallet" : ""}.` : "No coins yet."}${handle.toLowerCase() !== who.toLowerCase() ? ` <span class="small">${shortAddr(who)}</span>` : ""}</p></div>
+<div><h1 class="syne">${nameHeading(rawName)}</h1><p class="lead" style="margin-top:8px">${mine.length ? `${mine.length} ${plural(mine.length, "coin", "coins")}${isAuthor(chain, who) ? ", the author's wallet" : ""}.` : "No coins yet."}${handle.toLowerCase() !== who.toLowerCase() ? ` <span class="small">${shortAddr(who)}</span>` : ""}</p></div>
 ${factList}
 ${whoBlock(true)}
 ${rows.length ? `${sizePicker()}\n<div>${rows.join("\n")}</div>` : `<p>No coins here yet. <a href="/#mint">Mint one</a>.</p>`}
@@ -62,7 +62,7 @@ ${footer()}
 </main>
 ${connectScript("/")}
 ${rows.length ? `${downloadScript()}${actionScript(chain)}` : ""}`;
-  return layout(`${rawName} | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, `/${handle}`, `${mine.length} ${plural(mine.length, "coin", "coins")} of ${SITE} held by ${rawName}.`);
+  return layout(`${rawName} | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, `/${handle}`, `${mine.length} ${plural(mine.length, "coin", "coins")} of ${SITE} held by ${rawName}.`, false);
 }
 
 export function assetsPage(chain: ChainState | null, status: ChainStatus | null = null): string {
@@ -75,7 +75,7 @@ export function assetsPage(chain: ChainState | null, status: ChainStatus | null 
       : "No contract is configured on this server, so there is no address here yet.";
   const body = `<main class="prose" id="main">
 ${topBar("Assets")}
-<h2 class="syne">Take it. It is yours.</h2>
+<h1 class="syne">Take it. It is yours.</h1>
 <p>Every coin, the fifty Master Coins, the renderer, the contracts and the text of this site are <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0</a>. No credit needed, no permission to ask. Print it, remix it, mint it elsewhere. Owning a coin gives you the token and its backing; the image belongs to everyone. The site's code in the repository carries its own license file; the fonts Syne and Newsreader are under the SIL Open Font License; the libraries the site uses keep their own licenses.</p>
 <h2 class="syne">Images</h2>
 <p>Any coin as SVG at <code>/coin/N.svg</code>, as a 1024 pixel PNG at <code>/coin/N-1024.png</code>, and as a 1200 by 630 link card at <code>/coin/N.png</code>. The same coin at any yield level at <code>/coin/N.svg?yield=BPS</code>, any seed at <code>/preview/HEX.svg</code>, and each Master Coin with a sample seed at <code>/master/I.svg</code>. The SVG is the same file the contract holds: a 64 by 64 grid, one path per colour. Render it with <code>image-rendering: pixelated</code> so the pixels stay square.</p>

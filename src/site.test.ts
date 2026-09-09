@@ -539,7 +539,7 @@ test("the home page points at OnChainChecker next to OpenSea", () => {
   process.env.CHAIN_ID = "8453";
   try {
     const h = homePage(fakeChain(), OK);
-    expect(h).toContain("https://opensea.io/assets/base/0x7A7dea7489708cc9b50831C364aCf6e95aA13b41/1");
+    expect(h).toContain("https://opensea.io/collection/one-878836785");
     expect(h).toContain("https://onchainchecker.xyz/collection/base/0x7A7dea7489708cc9b50831C364aCf6e95aA13b41/1");
     expect(h).toContain("Fully on-chain, 5 of 5 on OnChainChecker");
     expect(onChainChecker({ chainId: 84532, address: "0xabc" })).toBe("https://onchainchecker.xyz/collection/base-sepolia/0xabc/1");

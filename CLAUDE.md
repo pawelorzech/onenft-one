@@ -1,6 +1,6 @@
 # one.onenft.click
 
-ONE: coins backed by USDC on Base, one series of 25,000 at a time, 50 Master Coins and 100 founder coins per series, four backing classes (5, 10, 25, 50 USDC). Fifth collection of onenft.click (hub repo `~/Programowanie/onenft-hub`), built 2026-09-06 in the skeleton of the sisters (`~/Programowanie/onenft-faces` is the closest). Live at https://one.onenft.click since 2026-09-06, contract `0x7A7dea7489708cc9b50831C364aCf6e95aA13b41` on Base mainnet (the second; the first, `0xF597…bcdB`, is retired) (see `docs/DEPLOYMENTS.md`); the audit trail is in `docs/DECISIONS.md`. Operational identifiers go in `CLAUDE.local.md` (gitignored).
+ONE: coins backed by USDC on Base, one series of 25,000 at a time, 50 Master Coins and 100 founder coins per series, four backing classes (5, 10, 25, 50 USDC). Fifth collection of onenft.click (hub repo `~/Programowanie/onenft/hub`), built 2026-09-06 in the skeleton of the sisters (`~/Programowanie/onenft/faces` is the closest). Live at https://one.onenft.click since 2026-09-06, contract `0x7A7dea7489708cc9b50831C364aCf6e95aA13b41` on Base mainnet (the second; the first, `0xF597…bcdB`, is retired) (see `docs/DEPLOYMENTS.md`); the audit trail is in `docs/DECISIONS.md`. Operational identifiers go in `CLAUDE.local.md` (gitignored).
 
 ## What this is
 

@@ -173,6 +173,8 @@ hr{border:0;border-top:1px solid var(--line);margin:0;width:100%}
 .testnet{display:inline-block;padding:3px 8px;border:1px solid var(--line);font-size:13px;color:var(--muted)}
 .counts{display:flex;gap:34px;flex-wrap:wrap;padding:22px 34px;border-bottom:1px solid var(--line)}
 .counts b{display:block;font-weight:700;font-size:26px;line-height:1}
+.sitenav{display:flex;gap:4px 22px;flex-wrap:wrap;padding:6px 34px;border-bottom:1px solid var(--line)}
+.sitenav a{display:inline-flex;align-items:center;min-height:44px}
 footer{padding:26px 34px;display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;color:var(--muted);font-size:16px}
 footer nav,.nav{display:flex;gap:6px 20px;flex-wrap:wrap}
 .step{display:flex;gap:2px}
@@ -180,15 +182,19 @@ footer nav,.nav{display:flex;gap:6px 20px;flex-wrap:wrap}
 .step a:hover{color:var(--fg);background:var(--soft)}
 .step .gone{display:inline-flex;min-width:44px;min-height:44px;box-shadow:0 0 0 1px var(--line);opacity:.35}
 .prose{max-width:680px;padding:38px 34px;display:flex;flex-direction:column;gap:22px}
-.prose h2{margin-top:22px}
+.prose h1,.prose h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:22px 0 0}
+.prose h1:first-child,.prose h2:first-child{margin-top:0}
 .prose p,.prose ul{margin:0}
 .prose a{overflow-wrap:anywhere}
 .prose code{font-family:ui-monospace,Menlo,monospace;font-size:.92em}
 .single{padding:38px 34px;display:flex;flex-direction:column;gap:22px;max-width:760px}
+.single h1,.single h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0}
 .single .coinimg{width:100%;max-width:512px;aspect-ratio:1;box-shadow:0 0 0 1px var(--line);display:block}
 .top{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 .top nav{display:flex;gap:4px 18px;flex-wrap:wrap;font-size:16px;color:var(--muted)}
 .wide{padding:38px 34px;display:flex;flex-direction:column;gap:28px;max-width:1180px}
+.wide h1,.wide h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0}
+.wide h3{font-weight:700;font-size:18px;margin:0}
 .wide p{margin:0}
 .strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
 .strip a,.strip div{text-decoration:none}
@@ -276,9 +282,11 @@ pre.snip{margin:0;padding:14px;background:var(--soft);overflow-x:auto;font-size:
  .row{min-height:64px;padding:14px 20px;gap:16px}
  .row img{width:56px;height:56px}
  .counts{padding:16px 20px;gap:24px}
+ .sitenav{padding:4px 20px}
  footer,.prose,.single,.wide,.mint{padding:20px}
  .tok{grid-template-columns:1fr;gap:16px}
  .tok img{width:100%;height:auto}
+ .total{align-items:flex-start;flex-direction:column;gap:4px}
 }
 @media (max-width:360px){h1{font-size:29px}.mark{font-size:17px}}
 @media (prefers-reduced-motion:no-preference){.row{transition:background .15s}}
@@ -295,7 +303,7 @@ export function descOf(chain: ChainState | null): string {
   return `${num(f.seriesSize)} pixel coins per series on Base, ${f.masters} one of ones, every coin backed by ${f.backings.join(", ")} USDC that earns yield. Burn to redeem.`;
 }
 
-export function layout(title: string, p: Colors, body: string, image = `/newest.png${IMG_Q}`, path = "/", description = descOf(null)): string {
+export function layout(title: string, p: Colors, body: string, image = `/newest.png${IMG_Q}`, path = "/", description = descOf(null), index = true): string {
   const alt = title.replace(/ \| .*$/, "") + " on " + SITE;
   return `<!doctype html>
 <html lang="en">
@@ -305,6 +313,7 @@ export function layout(title: string, p: Colors, body: string, image = `/newest.
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
 <meta name="theme-color" content="${p.bg}">
+${index ? "" : '<meta name="robots" content="noindex">'}
 <link rel="icon" href="/newest.svg${IMG_Q}" type="image/svg+xml">
 <link rel="canonical" href="https://${SITE}${esc(path)}">
 <meta property="og:title" content="${esc(title)}">
@@ -350,7 +359,7 @@ export function chainLinks(): string {
   const a = process.env.CONTRACT_ADDRESS;
   const id = Number(process.env.CHAIN_ID ?? 0);
   if (!a) return "";
-  const os = id === 8453 ? `https://opensea.io/assets/base/${a}/1` : `https://testnets.opensea.io/assets/base_sepolia/${a}/1`;
+  const os = id === 8453 ? "https://opensea.io/collection/one-878836785" : `https://testnets.opensea.io/assets/base_sepolia/${a}`;
   const scan = id === 8453 ? `https://basescan.org/address/${a}` : `https://sepolia.basescan.org/address/${a}`;
   return `<a href="${os}">OpenSea</a><a href="${onChainChecker({ chainId: id, address: a })}">Fully on-chain, 5 of 5 on OnChainChecker</a><a href="${scan}">Contract</a>`;
 }
@@ -902,6 +911,7 @@ export function homePage(chain: ChainState | null, status: ChainStatus | null = 
   const rows = ids.map((id) => coinRow(chain.coins.get(id)!, chain, names)).join("");
   const body = `<div class="page">${sidebar(chain, status)}<main id="main">
 ${staleNote(status)}
+<nav class="sitenav small" aria-label="Site">${menu()}</nav>
 <section class="hero"><img class="coinimg px" src="/coin/${newest.id}.svg${IMG_Q}" alt="Coin ${pad5(newest.id)}" width="396" height="396"><div class="meta">
 <span class="small">Newest coin</span>
 <span class="num syne">#${pad5(newest.id)}</span>
@@ -927,6 +937,7 @@ function emptyHome(p: Colors, chain: ChainState | null, status: ChainStatus | nu
   const live = Boolean(chain);
   const body = `<div class="page">${sidebar(chain, status)}<main id="main">
 ${staleNote(status)}
+<nav class="sitenav small" aria-label="Site">${menu()}</nav>
 ${noContractNote(status)}
 <section class="hero"><img class="coinimg px" src="/newest.svg${IMG_Q}" alt="A sealed coin" width="396" height="396"><div class="meta">
 <span class="small">No coin minted yet</span>
@@ -945,7 +956,7 @@ export function coinsPage(chain: ChainState | null, page: number, status: ChainS
   const p = pageColors(chain);
   const ids = chain ? coinIds(chain) : [];
   if (!ids.length) {
-    const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}${noContractNote(status)}<h2 class="syne">No coins yet</h2><p>Nothing is minted. The first coin will appear here. Until then, see the <a href="/masters">Master Coins</a> and the <a href="/traits">traits</a>.</p>${footer()}</main>`;
+    const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}${noContractNote(status)}<h1 class="syne">No coins yet</h1><p>Nothing is minted. The first coin will appear here. Until then, see the <a href="/masters">Master Coins</a> and the <a href="/traits">traits</a>.</p>${footer()}</main>`;
     return layout(`All coins | ${NAME}`, p, body, `/newest.png${IMG_Q}`, "/coins");
   }
   const per = 60;
@@ -958,7 +969,7 @@ export function coinsPage(chain: ChainState | null, page: number, status: ChainS
     return `<a class="px" href="/coin/${id}"><img src="/coin/${id}.svg${IMG_Q}" alt="Coin ${pad5(id)}" loading="lazy"><div class="cap"><b>#${pad5(id)}</b> ${esc(c.sealed ? "sealed" : coin.masterName || coin.traits.material)}</div></a>`;
   });
   const nav = `<div class="step">${pg > 1 ? `<a rel="prev" href="/coins?page=${pg - 1}" aria-label="Newer">‹</a>` : `<span class="gone"></span>`}${pg < pages ? `<a rel="next" href="/coins?page=${pg + 1}" aria-label="Older">›</a>` : `<span class="gone"></span>`}</div>`;
-  const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}<h2 class="syne">Coins ${pad5(slice[0])} to ${pad5(slice[slice.length - 1])}</h2><p class="small">Page ${pg} of ${pages}, newest first.</p>${nav}<div class="strip">${cells.join("")}</div>${nav}${footer()}${STEP_KEYS}</main>`;
+  const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}<h1 class="syne">Coins ${pad5(slice[0])} to ${pad5(slice[slice.length - 1])}</h1><p class="small">Page ${pg} of ${pages}, newest first.</p>${nav}<div class="strip">${cells.join("")}</div>${nav}${footer()}${STEP_KEYS}</main>`;
   return layout(`All coins, page ${pg} | ${NAME}`, p, body, `/newest.png${IMG_Q}`, `/coins?page=${pg}`);
 }
 
@@ -975,7 +986,7 @@ ${chain.nextId > chain.seriesSize ? `<details><summary>Looking for this number i
 ${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads on its own when it opens. If the seed never arrives, this coin can be burned for its backing from ${dateOf(c.sealedEscapeAt)}.</p>` : ""}
 <div class="step">${prev}${next}</div>
 <img class="coinimg px" src="/coin/${c.id}.svg${IMG_Q}" alt="Coin ${pad5(c.id)}" width="512" height="512">
-<span class="num syne">#${pad5(c.id)}</span>
+<h1 class="num syne" style="margin:0">#${pad5(c.id)}</h1>
 <div>${coinTags(coin, c)}<span class="small">${c.sealed ? "sealed" : coin.masterName ? `Master Coin ${esc(coin.masterName)}` : "procedural coin"}, coin ${pad5(c.number)} of series ${roman(c.series)}${c.sealed ? "" : `, seed ${fingerprint(c.seed)}`}, ${owner}</span></div>
 ${traitList(coin, c.sealed)}
 ${moneyBlock(c, coin.yieldLevel, factsOf(chain))}
@@ -1018,7 +1029,7 @@ export function mastersPage(chain: ChainState | null, names: Names = NO_NAMES, s
   });
   const left = chain ? chain.mastersLeft : f.masters;
   const body = `<main id="main" class="wide">${topBar("Master Coins")}${staleNote(status)}
-<h2 class="syne">${f.masters} Master Coins a series</h2>
+<h1 class="syne">${f.masters} Master Coins a series</h1>
 <p>Each series holds ${num(f.seriesSize)} art slots, ${f.masters} of them Master Coins. Every mint draws one slot from the ones left, so the first mint has ${f.masters} in ${num(f.seriesSize)} odds and the odds move with every draw, and when the series ends all ${f.masters} are out. A Master Coin carries whatever backing its minter chose, ${backingList(f.backings)} USDC. ${f.masters - left} of ${f.masters} drawn in series ${roman(chain?.series ?? 1)}. The images of the ones still in the urn show the master with a sample seed; the rim marks and the legend will differ on the real coin.</p>
 <div class="strip">${cells.join("")}</div>
 ${footer()}</main>`;
@@ -1034,7 +1045,7 @@ export function traitsPage(chain: ChainState | null): string {
     return `<h3 class="syne">${tb.trait}</h3><table class="tr"><thead><tr><th>value</th><th>odds</th></tr></thead><tbody>${rows}</tbody></table>`;
   });
   const body = `<main id="main" class="wide">${topBar("Traits")}
-<h2 class="syne">Eleven traits, drawn from the seed</h2>
+<h1 class="syne">Eleven traits, drawn from the seed</h1>
 <p>The seed comes from Chainlink VRF. It is drawn into these tables in this order, each draw with the odds below, then into a pattern scale, sixteen bits for the glyph and a salt for speckle. The seed also writes itself on the coin: eight hex digits under it, thirty-two marks on the rim. Two coins with the same eleven traits still differ. Master Coins skip the tables; they keep only their material.</p>
 <p>There is no rarity class. Rarity is the odds of a coin's own traits, and the only status the system defines is the Master Coin: ${f.masters} in ${num(f.seriesSize)}, ${pctOf((100 * f.masters) / f.seriesSize)} of a series.</p>
 ${tables.join("")}
@@ -1047,7 +1058,7 @@ export function yieldPage(chain: ChainState | null): string {
   const sample = "79db4ac1deadbeef";
   const cells = [0, ...YIELD_STEPS].map((bps, level) => `<div class="px"><img src="/preview/${sample}.svg?yield=${bps}" alt="Level ${level}" loading="lazy"><div class="cap"><b>Level ${level}</b> from ${bpsPct(bps)}</div></div>`);
   const body = `<main id="main" class="wide">${topBar("Yield ring")}
-<h2 class="syne">The coin ages with its capital</h2>
+<h1 class="syne">The coin ages with its capital</h1>
 <p>The centre of a coin never changes. Around it the renderer reads one number from the contract: lifetime yield over backing, in basis points. Claiming yield does not lower it; selling the coin does not reset it. It only goes up, and the ring follows it through ${YIELD_STEPS.length} levels: one orbit each for the first four, then the orbits fill in, then sparks between them, then the orbits take the accent colour.</p>
 <div class="levels">${cells.join("")}</div>
 <p class="small">Shown on a sample seed, ${sample.toUpperCase().slice(0, 8)}. The levels start at ${YIELD_STEPS.map(bpsPct).join(", ")} of lifetime yield.</p>
@@ -1062,7 +1073,7 @@ export function howPage(chain: ChainState | null, status: ChainStatus | null = n
     ? `<p>The contract is <a href="${explorer(chain.chainId)}/address/${chain.address}">${chain.address}</a> on ${chainName(chain.chainId)}. The vault it deposits into is <a href="${explorer(chain.chainId)}/address/${chain.vault}">${chain.vault}</a>, and the USDC is <a href="${explorer(chain.chainId)}/address/${chain.usdc}">${chain.usdc}</a>. The renderer new coins are pinned to is <a href="${explorer(chain.chainId)}/address/${chain.renderer}">${chain.renderer}</a>${chain.rendererLocked ? ", and it is locked for good" : ", and the author may still replace it for coins not yet minted"}.</p>`
     : `<p>${status?.configured ? "The chain did not answer, so the addresses are not on this page right now." : "No contract is configured on this server, so there is no address to show yet."}</p>`;
   const body = `<main id="main" class="prose">${topBar("How it works")}${staleNote(status)}
-<h2 class="syne">Two axes that never touch</h2>
+<h1 class="syne">Two axes that never touch</h1>
 <p>Every coin has art and capital, and they are drawn apart. The art comes from a random seed and an art slot. The capital is the USDC you put in at mint: ${backingList(f.backings)}. You choose the amount; you do not choose the art, and paying more buys no better odds. A ${f.backings[0]} USDC coin can be a Master Coin. A ${f.backings[f.backings.length - 1]} USDC coin can be plain.</p>
 <h2 class="syne">Where the money sits</h2>
 <p>The contract deposits your USDC into a vault on Base that follows the ERC-4626 standard and keeps the shares under your coin. The vault lends the USDC out and the shares grow in value. The coin's net asset value is what its shares convert to today. Burn the coin and the contract sends you the backing plus the yield earned, minus ${f.feePct}% of that yield, which goes to the author. That is the whole fee. The mint price is the backing, nothing on top. Yield can be claimed without burning; the coin keeps its record of everything it ever earned.</p>
@@ -1086,13 +1097,13 @@ ${footer()}</main>`;
 }
 
 export function notFound(chain: ChainState | null, what = "No such page."): string {
-  const body = `<main id="main" class="prose">${topBar("Not found")}<h2 class="syne">Not found</h2><p>${esc(what)}</p><p><a href="/">Back to the coins</a></p>${footer()}</main>`;
-  return layout(`Not found | ${NAME}`, pageColors(chain), body);
+  const body = `<main id="main" class="prose">${topBar("Not found")}<h1 class="syne">Not found</h1><p>${esc(what)}</p><p><a href="/">Back to the coins</a></p>${footer()}</main>`;
+  return layout(`Not found | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/", descOf(chain), false);
 }
 
 export function chainDown(chain: ChainState | null, why = "This page needs the chain, and the chain did not answer. Try again in a minute."): string {
-  const body = `<main id="main" class="prose">${topBar("Unavailable")}<h2 class="syne">The chain did not answer</h2><p>${esc(why)}</p><p><a href="/">Back to the coins</a></p>${footer()}</main>`;
-  return layout(`The chain did not answer | ${NAME}`, pageColors(chain), body);
+  const body = `<main id="main" class="prose">${topBar("Unavailable")}<h1 class="syne">The chain did not answer</h1><p>${esc(why)}</p><p><a href="/">Back to the coins</a></p>${footer()}</main>`;
+  return layout(`The chain did not answer | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/", descOf(chain), false);
 }
 
 // ---- terms and privacy
@@ -1104,7 +1115,7 @@ export function legalPage(kind: "terms" | "privacy", chain: ChainState | null): 
   const f = factsOf(chain);
   const contact = `<p>Questions go to <a href="${REPO}/issues">the repository</a> or to <a href="https://x.com/onenftclick">@onenftclick</a>.</p>`;
   const terms = `<main id="main" class="prose">${topBar("Terms")}
-<h2 class="syne">Terms of use</h2>
+<h1 class="syne">Terms of use</h1>
 <p class="small">Last changed ${LEGAL_UPDATED}.</p>
 <p><strong>What this is.</strong> This site shows coins that a contract on the Base chain mints, backs and draws. The site reads the chain and nothing else. It holds no keys, no funds and no account of yours.</p>
 <p><strong>What you sign, you send.</strong> A mint goes from your wallet to the contract. You send the backing, ${backingList(f.backings)} USDC a coin, and USDC needs one approval the first time. You send a Chainlink fee in ETH with the transaction, and the contract passes it to Chainlink for the randomness. You pay the network gas. A transaction that fails still costs gas. Every fee the contract takes is written on this site before you sign.</p>
@@ -1116,7 +1127,7 @@ export function legalPage(kind: "terms" | "privacy", chain: ChainState | null): 
 ${contact}
 ${footer()}</main>`;
   const privacy = `<main id="main" class="prose">${topBar("Privacy")}
-<h2 class="syne">Privacy</h2>
+<h1 class="syne">Privacy</h1>
 <p class="small">Last changed ${LEGAL_UPDATED}.</p>
 <p><strong>No accounts, no cookies.</strong> This site has no sign-up, sets no cookies and runs no advertising. It does not sell data, because it keeps almost none.</p>
 <p><strong>Server logs.</strong> The host keeps standard access logs: address, path, time, browser string. They exist to keep the site running and to find faults, and they are not kept longer than that needs.</p>

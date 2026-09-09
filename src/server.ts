@@ -77,6 +77,7 @@ async function route(url: URL): Promise<Response> {
   if (transactionResponse) return transactionResponse;
 
   // ---- everything that needs no chain answers before any chain read
+  if (path === "/robots.txt") return text("User-agent: *\nAllow: /\nDisallow: /api/\n");
   if (path === "/health") return text(`ok, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);
   if (path === "/ready") {
     const s = chainStatus();
