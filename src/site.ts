@@ -1,3 +1,4 @@
+import { pageDescription } from "./seo.ts";
 import { readChain, sendWithTimeout } from "./chain-read.ts";
 import { walletErrorScript } from "./wallet-errors.ts";
 /**
@@ -132,8 +133,11 @@ function css(p: Colors): string {
 [hidden]{display:none!important}
 html{background:var(--bg);color:var(--fg);font-family:"Newsreader",Georgia,serif;font-size:17px;line-height:1.5}
 body{margin:0;min-height:100vh}
+main,aside,.meta{min-width:0}
+p,li,dd,.crumb,.lead,.small,.wname{overflow-wrap:anywhere}
+main{scroll-margin-top:16px}
 a{color:inherit}
-a:focus-visible,button:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
 .skip{position:absolute;left:-999px;top:8px;background:var(--fg);color:var(--bg);padding:8px 14px;font-weight:700;z-index:9}
 .skip:focus{left:8px}
 .syne{font-family:"Syne",system-ui,sans-serif}
@@ -145,7 +149,7 @@ h1{font-weight:800;font-size:33px;line-height:.96;letter-spacing:-.045em;margin:
 h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0;overflow-wrap:anywhere}
 h3{font-weight:700;font-size:18px;margin:0}
 .lead{color:var(--muted);margin:0}
-.facts{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);max-width:1120px}
+.facts{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);max-width:1120px}
 .facts li{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px 20px 16px;display:flex;flex-direction:column;gap:6px;min-width:0}
 .facts .fig{font-weight:800;font-size:28px;line-height:1;letter-spacing:-.03em;white-space:nowrap}
 .facts .lab{font-size:15px;color:var(--muted);line-height:1.35}
@@ -159,12 +163,14 @@ hr{border:0;border-top:1px solid var(--line);margin:0;width:100%}
 .hero{padding:38px 34px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:minmax(0,396px) minmax(280px,1fr);gap:34px;align-items:start}
 .hero .coinimg{width:100%;max-width:396px;aspect-ratio:1;box-shadow:0 0 0 1px var(--line);display:block}
 .hero .meta{display:flex;flex-direction:column;gap:14px}
+.hero .num{font-size:clamp(44px,4.2vw,62px);overflow-wrap:anywhere}
 .num{font-weight:800;font-size:62px;line-height:.95;letter-spacing:-.03em}
 .row{display:flex;align-items:center;gap:22px;padding:0 34px;min-height:128px;border-bottom:1px solid var(--line);text-decoration:none}
 .row:hover{background:var(--soft)}
 .row img{width:92px;height:92px;display:block;flex-shrink:0;box-shadow:0 0 0 1px var(--line)}
 .row .n{font-weight:700;font-size:23px}
 .row .sub{color:var(--muted);font-size:15px}
+.row>span{min-width:0;overflow-wrap:anywhere}
 .row.yours .n::after{content:" yours";font-size:14px;font-weight:400;color:var(--muted)}
 .tag{display:inline-block;padding:1px 7px;border:1px solid var(--line);font-size:13px;color:var(--muted);margin-left:8px;vertical-align:middle}
 .tag.master{background:var(--fg);color:var(--bg);border-color:var(--fg)}
@@ -194,12 +200,12 @@ footer nav,.nav{display:flex;gap:6px 20px;flex-wrap:wrap}
 .top nav{display:flex;gap:4px 18px;flex-wrap:wrap;font-size:16px;color:var(--muted)}
 .wide{padding:38px 34px;display:flex;flex-direction:column;gap:28px;max-width:1180px}
 .wide h1,.wide h2{font-weight:800;font-size:30px;line-height:1;letter-spacing:-.03em;margin:0}
-.wide h3{font-weight:700;font-size:18px;margin:0}
+.wide h3,.wide h2.section-title{font-weight:700;font-size:18px;margin:0}
 .wide p{margin:0}
 .strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
 .strip a,.strip div{text-decoration:none}
-.strip img{width:100%;aspect-ratio:1;display:block;box-shadow:0 0 0 1px var(--line)}
-.strip .cap{font-size:14px;color:var(--muted);margin-top:6px}
+.strip img{width:100%;height:auto;aspect-ratio:1;display:block;box-shadow:0 0 0 1px var(--line)}
+.strip .cap{overflow-wrap:anywhere;font-size:14px;color:var(--muted);margin-top:6px}
 .strip .cap b{color:var(--fg)}
 .strip .gone img{opacity:.35}
 table.tr{border-collapse:collapse;width:100%;max-width:720px;font-size:16px}
@@ -236,10 +242,11 @@ table.tr td.n{text-align:right;font-family:"Syne",system-ui,sans-serif;font-weig
 .top nav a:hover,.nav a:hover,footer nav a:hover{color:var(--fg);text-decoration:underline;text-underline-offset:4px}
 .top nav,footer nav{gap:2px 24px}
 .whobox{display:flex;flex-direction:column;gap:8px}
-.wname{overflow-wrap:normal;word-break:keep-all}
+.wname{overflow-wrap:anywhere;word-break:normal}
 .who{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;max-width:720px}
 .who form{display:flex;flex-direction:column;gap:8px;flex:1;min-width:280px}
-.who form .line{display:flex;gap:12px}
+.who form .line{display:flex;gap:12px;flex-wrap:wrap}
+.who form .line .field{min-width:min(100%,180px)}
 .who label{font-size:15px;color:var(--muted)}
 .who .cta{min-height:48px;height:48px;padding:0 22px;font-size:17px;width:auto}
 button.cta{border:0;cursor:pointer;font-family:"Syne",system-ui,sans-serif}
@@ -303,7 +310,8 @@ export function descOf(chain: ChainState | null): string {
   return `${num(f.seriesSize)} pixel coins per series on Base, ${f.masters} one of ones, every coin backed by ${f.backings.join(", ")} USDC that earns yield. Burn to redeem.`;
 }
 
-export function layout(title: string, p: Colors, body: string, image = `/newest.png${IMG_Q}`, path = "/", description = descOf(null), index = true): string {
+export function layout(title: string, p: Colors, body: string, image = `/newest.png${IMG_Q}`, path = "/", description?: string, index = true): string {
+  description ??= pageDescription(SITE, path, descOf(null));
   const alt = title.replace(/ \| .*$/, "") + " on " + SITE;
   return `<!doctype html>
 <html lang="en">
@@ -328,6 +336,9 @@ ${index ? "" : '<meta name="robots" content="noindex">'}
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:description" content="${esc(description)}">
 <meta name="twitter:image" content="https://${SITE}${esc(image)}">
+<meta name="twitter:image:alt" content="${esc(alt)}">
+<meta property="og:locale" content="en_US">
+<meta property="og:image:type" content="image/png">
 ${FONTS}
 ${ANALYTICS}
 <style>${css(p)}</style>
@@ -382,10 +393,10 @@ if(eth.on){eth.on('accountsChanged',mark);eth.on('disconnect',function(){mark([]
 /** How old the numbers on the page are, when they are not fresh. */
 export function staleNote(status: ChainStatus | null | undefined): string {
   if (!status?.configured) return "";
-  if (!status.known) return `<p class="note" role="status">The chain did not answer. Coins, counts and minting need it. The pages that need no chain still work. Try again in a minute.</p>`;
+  if (!status.known) return `<p class="note" role="status">The chain did not answer. Coins, counts and minting need it. The pages that need no chain still work. Try again in a minute. <a href="">Try again</a>.</p>`;
   if (!status.stale) return "";
   const when = new Date(status.readAt!).toISOString().slice(11, 16);
-  return `<p class="note" role="status">The counts could not be refreshed. Showing what the chain said at ${when} UTC.</p>`;
+  return `<p class="note" role="status">The counts could not be refreshed. Showing what the chain said at ${when} UTC. <a href="">Try again</a>.</p>`;
 }
 
 /** Before the contract exists, or while it is not configured here. */
@@ -520,7 +531,7 @@ export function sidebar(chain: ChainState | null, status: ChainStatus | null, cu
 ${crumb(current)}
 <h1 class="syne">${num(f.seriesSize)} coins a series. ${f.masters} one of ones. Every coin backed.</h1>
 <p class="lead">A pixel coin drawn on chain from a random seed, and ${backingList(f.backings)} USDC held in a vault that earns. Art and money never correlate: a ${f.backings[0]} USDC coin can be a Master Coin. Burn the coin and the backing plus its yield comes back to you. ${RISK_SHORT.replace("Read what can go wrong before you mint.", `<a href="/how#risk">Read what can go wrong</a> before you mint.`)}</p>
-<a class="cta syne" href="${live ? "#mint" : "/how"}" aria-disabled="${live ? "false" : "true"}">${live ? "Mint a coin" : status?.configured ? "The chain did not answer" : "Minting opens with the contract"}</a>
+${live ? `<a class="cta syne" href="#mint">Mint a coin</a>` : `<p class="note" role="status">${status?.configured ? "The chain did not answer. Minting is unavailable." : "Minting opens with the contract."}</p><a class="cta ghost syne" href="/how">How it works</a>`}
 <ul class="facts">
 <li><span class="fig syne">${roman(series)}</span><span class="lab">series, ${num(f.seriesSize)} coins each, series without end</span></li>
 <li><span class="fig syne">${mintedHere === null ? "?" : num(mintedHere)}</span><span class="lab">of ${num(f.seriesSize)} minted in this series</span></li>
@@ -832,7 +843,7 @@ acts.forEach(function(b){b.addEventListener('click',async function(){
   if(b.getAttribute('aria-busy')==='true')return;
   var act=b.getAttribute('data-act');var id=b.getAttribute('data-id');
   if(act==='redeem'&&!confirm(b.getAttribute('data-confirm')))return;
-  var was=b.textContent;b.setAttribute('aria-busy','true');b.textContent='\\u2026';
+  var was=b.textContent;b.setAttribute('aria-busy','true');b.textContent='…';
   var phase='before',hash=null,pkey=null;
   try{
     var accs=await eth.request({method:'eth_requestAccounts'});if(!accs||!accs.length)throw new Error('the wallet gave no account');
@@ -928,7 +939,7 @@ ${footer()}
 </main></div>
 ${mintScript(chain)}
 ${YOURS}`;
-  return layout(`${NAME} | ${descOf(chain).split(".")[0]}`, p, body, `/newest.png${IMG_Q}`, "/", descOf(chain));
+  return layout(`${NAME} | Pixel coins on Base, backed by USDC`, p, body, `/newest.png${IMG_Q}`, "/", descOf(chain));
 }
 
 /** Before the first mint, or with no chain to read: the sealed coin, the numbers, and the door to the rest. */
@@ -949,19 +960,23 @@ ${chain ? mintBox(chain) : ""}
 ${footer()}
 </main></div>
 ${live ? mintScript(chain) : ""}`;
-  return layout(`${NAME} | ${descOf(chain).split(".")[0]}`, p, body, `/newest.png${IMG_Q}`, "/", descOf(chain));
+  return layout(`${NAME} | Pixel coins on Base, backed by USDC`, p, body, `/newest.png${IMG_Q}`, "/", descOf(chain));
 }
 
 export function coinsPage(chain: ChainState | null, page: number, status: ChainStatus | null = null): string {
   const p = pageColors(chain);
   const ids = chain ? coinIds(chain) : [];
   if (!ids.length) {
+    if (!chain && status?.configured) {
+      const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}<h1 class="syne">Coins unavailable</h1><p>The collection could not be read. <a href="">Try again</a>, or read <a href="/how">how it works</a>.</p>${footer()}</main>`;
+      return layout(`Coins unavailable | ${NAME}`, p, body, `/newest.png${IMG_Q}`, "/coins", undefined, false);
+    }
     const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}${noContractNote(status)}<h1 class="syne">No coins yet</h1><p>Nothing is minted. The first coin will appear here. Until then, see the <a href="/masters">Master Coins</a> and the <a href="/traits">traits</a>.</p>${footer()}</main>`;
     return layout(`All coins | ${NAME}`, p, body, `/newest.png${IMG_Q}`, "/coins");
   }
   const per = 60;
   const pages = Math.max(1, Math.ceil(ids.length / per));
-  const pg = Math.min(pages, Math.max(1, page));
+  const pg = Number.isSafeInteger(page) ? Math.min(pages, Math.max(1, page)) : 1;
   const slice = ids.slice((pg - 1) * per, pg * per);
   const cells = slice.map((id) => {
     const c = chain!.coins.get(id)!;
@@ -970,7 +985,7 @@ export function coinsPage(chain: ChainState | null, page: number, status: ChainS
   });
   const nav = `<div class="step">${pg > 1 ? `<a rel="prev" href="/coins?page=${pg - 1}" aria-label="Newer">‹</a>` : `<span class="gone"></span>`}${pg < pages ? `<a rel="next" href="/coins?page=${pg + 1}" aria-label="Older">›</a>` : `<span class="gone"></span>`}</div>`;
   const body = `<main id="main" class="wide">${topBar("All coins")}${staleNote(status)}<h1 class="syne">Coins ${pad5(slice[0])} to ${pad5(slice[slice.length - 1])}</h1><p class="small">Page ${pg} of ${pages}, newest first.</p>${nav}<div class="strip">${cells.join("")}</div>${nav}${footer()}${STEP_KEYS}</main>`;
-  return layout(`All coins, page ${pg} | ${NAME}`, p, body, `/newest.png${IMG_Q}`, `/coins?page=${pg}`);
+  return layout(`All coins, page ${pg} | ${NAME}`, p, body, `/newest.png${IMG_Q}`, pg === 1 ? "/coins" : `/coins?page=${pg}`);
 }
 
 export function coinPage(chain: ChainState, c: CoinRecord, names: Names = NO_NAMES, status: ChainStatus | null = null): string {
@@ -983,7 +998,7 @@ export function coinPage(chain: ChainState, c: CoinRecord, names: Names = NO_NAM
   const owner = c.owner ? `${isAuthor(chain, c.owner) ? "held by the author" : `held by ${ownerLink(c.owner, names)}`}` : "holder unknown";
   const body = `<main id="main" class="single">${topBar(`#${pad5(c.id)}`)}${staleNote(status)}${dataNote(chain, c)}
 ${chain.nextId > chain.seriesSize ? `<details><summary>Looking for this number in another series?</summary><p>Some marketplace links use the number within a series. This page is token #${c.id}, series ${c.series}.</p><form action="/series-coin"><label for="series-choice">Series</label><input id="series-choice" name="series" type="number" min="1" max="${Math.ceil((chain.nextId - 1) / chain.seriesSize)}" value="${c.series}" required><input name="number" type="hidden" value="${c.number}"><button type="submit">Open coin</button></form></details>` : ""}
-${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads on its own when it opens. If the seed never arrives, this coin can be burned for its backing from ${dateOf(c.sealedEscapeAt)}.</p>` : ""}
+${c.sealed ? `<p class="note" role="status" id="sealed-note">This coin is sealed. Chainlink VRF has not answered yet, so it has no seed and no art slot. The page reloads when it opens and no wallet action is in progress. If the seed never arrives, this coin can be burned for its backing from ${dateOf(c.sealedEscapeAt)}.</p><p class="small" id="seed-status" aria-live="polite"></p>` : ""}
 <div class="step">${prev}${next}</div>
 <img class="coinimg px" src="/coin/${c.id}.svg${IMG_Q}" alt="Coin ${pad5(c.id)}" width="512" height="512">
 <h1 class="num syne" style="margin:0">#${pad5(c.id)}</h1>
@@ -1007,11 +1022,12 @@ export function dataNote(chain: ChainState, coin?: CoinRecord): string {
 }
 
 /** A sealed coin's page asks the site every ten seconds and reloads when the seed lands. */
-function sealedWatch(id: number): string {
+export function sealedWatch(id: number): string {
   return `<script>
-(function(){var n=0;async function tick(){n++;
- try{var r=await fetch('/api/coin/${id}',{cache:'no-store'});if(r.ok){var j=await r.json();if(j&&j.sealed===false){location.reload();return}}}catch(e){}
- if(n<180)setTimeout(tick,10000);else{var el=document.getElementById('sealed-note');if(el)el.textContent='This coin is still sealed. Chainlink VRF is taking long. The coin is safe; refresh to check again.'}}
+(function(){var n=0;var out=document.getElementById('seed-status');function say(t){if(out)out.textContent=t}async function tick(){n++;
+ var ctl=new AbortController();var timer=setTimeout(function(){ctl.abort()},10000);
+ try{var r=await fetch('/api/coin/${id}',{cache:'no-store',signal:ctl.signal});if(!r.ok)throw new Error('unavailable');var j=await r.json();if(!j||typeof j.sealed!=='boolean')throw new Error('invalid status');if(j.sealed===false){if(!document.querySelector('[data-act][aria-busy="true"]')){location.reload();return}say('The coin has opened. Waiting for the wallet operation to finish before refreshing.')}else say('The seed has not arrived yet. Checking again in ten seconds.')}catch(e){say('The seed status could not be checked. Trying again in ten seconds.')}finally{clearTimeout(timer)}
+ if(n<180)setTimeout(tick,10000);else{say('Automatic checks have stopped. Refresh to check the seed again.');if(out){var a=document.createElement('a');a.href='';a.textContent='Refresh';out.appendChild(document.createTextNode(' '));out.appendChild(a)}}}
 setTimeout(tick,10000)})();
 </script>`;
 }
@@ -1042,7 +1058,7 @@ export function traitsPage(chain: ChainState | null): string {
   const tables = TABLES.map((tb) => {
     const total = tb.weights.reduce((a, b) => a + b, 0);
     const rows = tb.names.map((n, i) => `<tr><td>${esc(n)}</td><td class="n">${pctOf((100 * tb.weights[i]) / total)}</td></tr>`).join("");
-    return `<h3 class="syne">${tb.trait}</h3><table class="tr"><thead><tr><th>value</th><th>odds</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<h2 class="syne section-title">${tb.trait}</h2><table class="tr"><thead><tr><th>value</th><th>odds</th></tr></thead><tbody>${rows}</tbody></table>`;
   });
   const body = `<main id="main" class="wide">${topBar("Traits")}
 <h1 class="syne">Eleven traits, drawn from the seed</h1>
@@ -1138,5 +1154,11 @@ ${footer()}</main>`;
 ${contact}
 ${footer()}</main>`;
   const title = kind === "terms" ? "Terms" : "Privacy";
-  return layout(`${title} | ${NAME}`, pageColors(chain), kind === "terms" ? terms : privacy, `/newest.png${IMG_Q}`, `/${kind}`, descOf(chain));
+  return layout(`${title} | ${NAME}`, pageColors(chain), kind === "terms" ? terms : privacy, `/newest.png${IMG_Q}`, `/${kind}`);
+}
+
+/** A recoverable server failure; never expose a stack trace or collapse to a blank text page. */
+export function serviceError(): string {
+  const body = `<main id="main" class="single">${topBar("Unavailable")}<h1 class="syne">This page could not be loaded</h1><p>Please try again. Your wallet and any transaction already sent are unaffected.</p><nav class="nav" aria-label="Recovery"><a href="">Try again</a><a href="/">Back to the collection</a></nav></main>`;
+  return layout(`Unavailable | ${SITE}`, pageColors(null), body, `/newest.png${IMG_Q}`, "/", "This page could not be loaded. Try again.", false);
 }

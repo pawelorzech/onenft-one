@@ -1,3 +1,4 @@
+import { sitemapResponse, robotsTxt } from "./seo.ts";
 import { transactionApi } from "./transaction-status.ts";
 import { mintPage } from "./mint-page.ts";
 /**
@@ -14,7 +15,7 @@ import { seriesCoinId } from "./series.ts";
 import { chainState, chainStatus, contractEnabled, readNow, newestCoin, factsOf, backingList, IMG_V, IMG_Q, CONTRACT, CHAIN_ID, type ChainState } from "./contract.ts";
 import { coinOfSeed, placeholderCoin } from "./preview.ts";
 import { coinOf } from "./token.ts";
-import { homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, legalPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
+import { serviceError, SITE, homePage, coinsPage, coinPage, mastersPage, traitsPage, yieldPage, howPage, legalPage, notFound, chainDown, pad5, bpsPct, num, type Names } from "./site.ts";
 import { coinJson, stateJson, specJson, holderJson } from "./api.ts";
 import { cardPng, squarePng } from "./image.ts";
 import { yoursPage, holderPage, assetsPage } from "./pages.ts";
@@ -56,7 +57,7 @@ export async function handle(req: Request): Promise<Response> {
     return withHeaders(await route(url));
   } catch (e) {
     console.error(`route ${url.pathname}:`, (e as Error).message);
-    return withHeaders(url.pathname.startsWith("/api/") ? json({ error: "internal error" }, 0, 500) : text("internal error", 500));
+    return withHeaders(url.pathname.startsWith("/api/") ? json({ error: "internal error" }, 0, 500) : html(serviceError(), 500));
   }
 }
 
@@ -77,12 +78,21 @@ async function route(url: URL): Promise<Response> {
   if (transactionResponse) return transactionResponse;
 
   // ---- everything that needs no chain answers before any chain read
-  if (path === "/robots.txt") return text("User-agent: *\nAllow: /\nDisallow: /api/\n");
+  if (path === "/robots.txt") return new Response(robotsTxt(SITE), { headers: { "content-type": "text/plain; charset=utf-8" } });
   if (path === "/health") return text(`ok, up ${Math.floor((Date.now() - BOOT_AT) / 1000)} s`);
   if (path === "/ready") {
     const s = chainStatus();
     const ok = !s.configured || s.known;
     return json({ ok, chain: s, keeper: keeperInfo() }, 0, ok ? 200 : 503);
+  }
+  if (path.startsWith("/sitemap")) {
+    const snapshot = await chainState();
+    if (contractEnabled() && !snapshot) return new Response("The collection could not be read. Try again in a minute.", { status: 503, headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "60", "cache-control": "no-store" } });
+    const tokens = snapshot ? [...snapshot.coins.keys()].sort((a, b) => a - b).map(id => "/coin/" + id) : [];
+    const pages = ["/", "/coins", "/masters", "/traits", "/yield", "/how", "/assets", "/terms", "/privacy"];
+    if (snapshot) for (let i = 2; i <= Math.ceil(snapshot.coins.size / 60); i++) pages.push("/coins?page=" + i);
+    const map = sitemapResponse(url, SITE, pages, tokens);
+    if (map) return map;
   }
   if (path === "/spec.json") return json(specJson(await chainState()), 3600);
   if (path === "/traits") return html(traitsPage(await chainState()));

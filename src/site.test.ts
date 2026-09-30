@@ -97,6 +97,21 @@ const DOWN: ChainStatus = { configured: true, known: false, stale: false, readAt
 const STALE: ChainStatus = { configured: true, known: true, stale: true, readAt: Date.parse("2026-09-06T12:04:00Z"), ageSeconds: 600, error: "no answer", errorAt: 1 };
 const OK: ChainStatus = { configured: true, known: true, stale: false, readAt: Date.now(), ageSeconds: 1, error: null, errorAt: null };
 
+test("coin pagination rejects NaN, infinity and fractional pages without corrupting the gallery", () => {
+  const chain = fakeChain();
+  const first = coinsPage(chain, 1);
+  for (const value of [NaN, Infinity, -Infinity, -2, 1.5]) {
+    expect(coinsPage(chain, value)).toBe(first);
+  }
+  expect(first).toContain('href="https://one.onenft.click/coins"');
+});
+
+test("unknown coin supply is not described as an empty collection", () => {
+  const html = coinsPage(null, 1, DOWN);
+  expect(html).toContain("Coins unavailable");
+  expect(html).not.toContain("Nothing is minted.");
+});
+
 test("no contract: the empty state, no mint box, and zero counts because zero is the truth", () => {
   const h = homePage(null, OFF);
   expect(h).toContain("Minting opens with the contract");

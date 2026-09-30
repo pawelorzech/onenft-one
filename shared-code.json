@@ -4,5 +4,7 @@
   "src/ens.ts": "5d2de85b0a684a4830841d9d1f4d4791c463ebff8cf20c35ea6e10634d84314c",
   "src/chain-read.ts": "a2796b5c182ac01e0c1e020c86a8b19a5ae5819cd838e382fd142fa002f517d0",
   "src/transaction-status.ts": "49f02422cf8b2b958009135775d1d7bf67ae3ff112730f500669221eb2b862d9",
-  "src/transaction-status.test.ts": "43bc832522a03ba8b388aa617960849ac2356b37e53e6414f17c90c50fb072a1"
+  "src/transaction-status.test.ts": "43bc832522a03ba8b388aa617960849ac2356b37e53e6414f17c90c50fb072a1",
+  "src/seo.ts": "b8c4b7cfbe18381d16fcd80604c3493963f4cecb91692762ff71886742dba57d",
+  "src/seo.test.ts": "d7dc3b00c3374c3e088f25455ffafb15021b38e28d4e2d7f77431ec2b38e53ab"
 }

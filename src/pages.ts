@@ -18,12 +18,12 @@ ${staleNote(status)}
 ${noContractNote(status)}
 <div><h1 class="syne">Your coins</h1><p class="lead" style="margin-top:8px">Connect a wallet or type an address, and this page lists every coin it holds with its backing, its yield and its ring, each one ready to save as SVG, PNG or JPEG, and each one ready to claim or burn.</p></div>
 ${bad !== null ? `<p class="note" role="alert">"${esc(bad)}" is not a wallet address or an ENS name. An address is 42 characters starting with 0x; a name ends in .eth.</p>` : ""}
-${whoBlock(Boolean(chain))}
+${whoBlock(Boolean(chain), bad ?? "")}
 <p class="small">Viewing a wallet needs no transaction and no signature. Its public address appears in the page URL and is sent to this site to load its tokens. The same list is on <a href="https://${PARENT}/wallet">${PARENT}</a> for every collection at once; each site connects on its own.</p>
 ${footer()}
 </main>
 ${connectScript("/", true)}`;
-  return layout(`Your coins | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/yours");
+  return layout(`Your coins | ${NAME}`, pageColors(chain), body, `/newest.png${IMG_Q}`, "/yours", undefined, false);
 }
 
 /** One wallet: its coins, what they hold, and the two things its owner can do with each. */

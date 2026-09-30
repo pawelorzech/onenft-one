@@ -10,8 +10,8 @@ export const FILE_PREFIX = "one";
 export const PIXEL = true;
 export const SIZES = [1024, 2048, 4096];
 
-export function whoBlock(canConnect: boolean): string {
-  return `<div class="whobox"><div class="who">${canConnect ? `<button class="cta syne" id="connect" type="button">Connect wallet</button>` : ""}<form action="/go" method="get"><label for="who">Wallet address or ENS name</label><div class="line"><input class="field" id="who" name="who" placeholder="0x1234… or name.eth" autocomplete="off" spellcheck="false" required pattern="^\\s*(0x[0-9a-fA-F]{40}|[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.eth)\\s*$" title="A 42-character address starting with 0x, or an ENS name ending in .eth"><button class="cta ghost syne" type="submit">View wallet</button></div></form></div>
+export function whoBlock(canConnect: boolean, value = ""): string {
+  return `<div class="whobox"><div class="who">${canConnect ? `<button class="cta syne" id="connect" type="button">Connect wallet</button>` : ""}<form action="/go" method="get"><label for="who">Wallet address or ENS name</label><div class="line"><input class="field" id="who" name="who" value="${esc(value)}" placeholder="0x1234… or name.eth" autocomplete="off" spellcheck="false" required pattern="^\\s*(0x[0-9a-fA-F]{40}|[a-zA-Z0-9\\-]+(\\.[a-zA-Z0-9\\-]+)*\\.eth)\\s*$" title="A 42-character address starting with 0x, or an ENS name ending in .eth"><button class="cta ghost syne" type="submit">View wallet</button></div></form></div>
 <p class="msg" id="msg" aria-live="polite"></p>
 <p class="small" id="last" hidden>Last time here: <a href="/">…</a>.</p></div>`;
 }
@@ -40,11 +40,11 @@ var BASE=${JSON.stringify(base)};var ENTRY=${entry ? "true" : "false"};var KEY='
 function say(t){if(out)out.textContent=t}
 function here(a){return location.pathname.toLowerCase()===(BASE+a).toLowerCase()}
 function remember(a){try{localStorage.setItem(KEY,a)}catch(e){}}
-function offer(a,label){if(!last||here(a))return;var l=last.querySelector('a');l.href=BASE+a;l.textContent=a.slice(0,6)+'\\u2026'+a.slice(-4);last.firstChild.textContent=label+': ';last.hidden=false}
+function offer(a,label){if(!last||here(a))return;var l=last.querySelector('a');l.href=BASE+a;l.textContent=a.slice(0,6)+'…'+a.slice(-4);last.firstChild.textContent=label+': ';last.hidden=false}
 var who=null;try{who=localStorage.getItem(KEY)}catch(e){}
 if(who&&/^0x[0-9a-fA-F]{40}$/.test(who))offer(who,'Last time here');
 if(!btn)return;var eth=window.ethereum;
-if(!eth||!eth.request){btn.disabled=true;btn.textContent='No wallet detected';say('No wallet detected. Enter a public address to browse, or open this site in your wallet\\u2019s browser to connect.');return}
+if(!eth||!eth.request){btn.disabled=true;btn.textContent='No wallet detected';say('No wallet detected. Enter a public address to browse, or open this site in your wallet’s browser to connect.');return}
 function known(accs){if(!accs||!accs.length){btn.textContent='Connect wallet';btn.onclick=null;btn.disabled=false;return}var a=accs[0];remember(a);if(here(a)){btn.textContent='This is your wallet';btn.disabled=true;return}if(ENTRY){location.replace(BASE+a);return}btn.textContent='Your wallet';btn.disabled=false;btn.onclick=function(){location.href=BASE+a};offer(a,'Connected')}
 eth.request({method:'eth_accounts'}).then(known).catch(function(){});
 if(eth.on){eth.on('accountsChanged',known);eth.on('disconnect',function(){known([])})}
@@ -71,11 +71,10 @@ document.querySelectorAll('[data-dl]').forEach(function(el){el.addEventListener(
   ev.preventDefault();if(busy){say('One download at a time. The other one is still drawing.');return}
   var kind=el.getAttribute('data-dl');var n=el.getAttribute('data-id')||el.getAttribute('data-day');var unit=el.getAttribute('data-unit')||'face';var prefix=el.getAttribute('data-prefix')||PREFIX;
   var pixel=el.hasAttribute('data-pixel')?el.getAttribute('data-pixel')==='1':PIXEL;var bg=el.getAttribute('data-bg')||'#000000';
-  busy=true;var was=el.textContent;el.textContent='\\u2026';el.setAttribute('aria-busy','true');say('');var u=null;
+  busy=true;var was=el.textContent;el.textContent='…';el.setAttribute('aria-busy','true');say('');var u=null;
   try{
     var ctl=new AbortController();var t=setTimeout(function(){ctl.abort()},20000);
-    var res;try{res=await fetch(el.getAttribute('data-src'),{signal:ctl.signal})}finally{clearTimeout(t)}
-    if(!res.ok)throw new Error('the image answered '+res.status);var text=await res.text();
+    var res,text;try{res=await fetch(el.getAttribute('data-src'),{signal:ctl.signal});if(!res.ok)throw new Error('the image answered '+res.status);text=await res.text()}finally{clearTimeout(t)}
     if(kind==='svg'){save(new Blob([text],{type:'image/svg+xml'}),prefix+'-'+unit+'-'+n+'.svg');return}
     text=text.replace(/ width="\\d+" height="\\d+"/,' width="'+size+'" height="'+size+'"');
     u=URL.createObjectURL(new Blob([text],{type:'image/svg+xml'}));var img=new Image();
