@@ -6,5 +6,7 @@
   "src/transaction-status.ts": "49f02422cf8b2b958009135775d1d7bf67ae3ff112730f500669221eb2b862d9",
   "src/transaction-status.test.ts": "43bc832522a03ba8b388aa617960849ac2356b37e53e6414f17c90c50fb072a1",
   "src/seo.ts": "b8c4b7cfbe18381d16fcd80604c3493963f4cecb91692762ff71886742dba57d",
-  "src/seo.test.ts": "d7dc3b00c3374c3e088f25455ffafb15021b38e28d4e2d7f77431ec2b38e53ab"
+  "src/seo.test.ts": "d7dc3b00c3374c3e088f25455ffafb15021b38e28d4e2d7f77431ec2b38e53ab",
+  "src/rpc.ts": "da73753edacdc0e90abd953ed99a3b4a114602ba4cfd3f4d3be0f1c58e516f52",
+  "src/rpc.test.ts": "dcc71897823d67b30d8c0d1a917c903077d299aeb379c42cd73070329cc3a539"
 }

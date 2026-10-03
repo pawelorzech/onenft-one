@@ -9,7 +9,7 @@ test("series URLs and form resolve to global token URLs through the running serv
     catch { return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32000, message: "unsupported fixture request" } }); }
   } });
   const port = 41000 + Math.floor(Math.random() * 1000), base = `http://127.0.0.1:${port}`;
-  const proc = Bun.spawn(["bun", "run", "src/server.ts"], { env: { ...process.env, PORT: String(port), CONTRACT_ADDRESS: TOKEN, CHAIN_ID: "8453", BASE_RPC_URL: `http://127.0.0.1:${rpc.port}`, DEPLOYER_KEY: "", CHAIN_DEADLINE_MS: "2500" }, stdout: "ignore", stderr: "ignore" });
+  const proc = Bun.spawn(["bun", "run", "src/server.ts"], { env: { ...process.env, BASE_RPC_FALLBACK_URLS: "", PORT: String(port), CONTRACT_ADDRESS: TOKEN, CHAIN_ID: "8453", BASE_RPC_URL: `http://127.0.0.1:${rpc.port}`, DEPLOYER_KEY: "", CHAIN_DEADLINE_MS: "2500" }, stdout: "ignore", stderr: "ignore" });
   try {
     let ready = false;
     for (let i = 0; i < 100; i++) {

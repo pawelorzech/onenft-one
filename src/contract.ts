@@ -17,6 +17,7 @@
  * read until the next full pass.
  */
 import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseAbi, toFunctionSelector, toEventSelector, type Address } from "viem";
+import { readTransport } from "./rpc.ts";
 import { base, baseSepolia } from "viem/chains";
 import { Swr, type SwrStatus } from "./swr.ts";
 
@@ -292,7 +293,7 @@ const RECENT = 120;
 const ALL_TTL_MS = Number(process.env.COINS_TTL_MS ?? 10 * 60_000);
 const CHUNK = 400;
 
-const client = CONTRACT ? createPublicClient({ chain, transport: http(process.env.BASE_RPC_URL, { timeout: RPC_TIMEOUT_MS, retryCount: 1 }) }) : null;
+const client = CONTRACT ? createPublicClient({ chain, transport: readTransport(CHAIN_ID, RPC_TIMEOUT_MS) }) : null;
 
 export function contractEnabled(): boolean {
   return Boolean(client && CONTRACT);
